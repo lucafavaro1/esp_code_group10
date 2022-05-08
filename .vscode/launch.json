@@ -1,0 +1,28 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+	  {
+		"name": "GDB",
+		"type": "cppdbg",
+		"request": "launch",
+		"MIMode": "gdb",
+		"preLaunchTask": "OpenOCD",
+		"miDebuggerPath": "${config:idfInstFolder}/tools/xtensa-esp32-elf/esp-2020r3-8.4.0/xtensa-esp32-elf/bin/xtensa-esp32-elf-gdb",
+		"program": "${workspaceFolder}/build/blink.elf",
+		"windows": {
+		  "program": "${workspaceFolder}\\build\\blink.elf"
+		},
+		"cwd": "${workspaceFolder}",
+		"setupCommands": [
+		  { "text": "target remote :3333" },
+		  { "text": "mon reset halt" },
+		  { "text": "thb app_main" },
+		  { "text": "flushregs" }
+		],
+		"externalConsole": false,
+		"logging": {
+		  "engineLogging": true
+		}
+	  }
+	]
+  }
