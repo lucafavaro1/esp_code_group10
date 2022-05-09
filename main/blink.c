@@ -19,7 +19,7 @@ void app_main(void){
 	ESP_ERROR_CHECK(gpio_set_direction(BLINK_GPIO, GPIO_MODE_INPUT_OUTPUT));	// set pin 22 as input and output
 	ESP_ERROR_CHECK(gpio_set_direction(BUTTON_GPIO, GPIO_MODE_INPUT));	// set pin 21 as input
 	
-
+	
 	// Version 1: one click led on, one click led off 
 	int lastStateButton = gpio_get_level(BUTTON_GPIO);
 
@@ -34,9 +34,9 @@ void app_main(void){
 		vTaskDelay(10);	// to avoid "task watchdog got triggered" error
 	}
 	
-
-	// Version 2: while pressing led on, release button led off
 	/*
+	// Version 2: while pressing led on, release button led off
+	
 	while(1) {
 		int stateButton = gpio_get_level(BUTTON_GPIO);
 			if(!stateButton)
@@ -49,7 +49,6 @@ void app_main(void){
 			
 	}
 	*/
-	
 
 	// version led on and off setting length and frequency in menuconfig
 	/*

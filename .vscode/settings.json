@@ -2,7 +2,8 @@
     "cmake.configureOnOpen": false,
     "files.associations": {
         "sstream": "c",
-        "sdkconfig.h": "c"
+        "sdkconfig.h": "c",
+        "task.h": "c"
     },
     
     // The following items should be replaced throughout this file 
@@ -18,7 +19,7 @@
 
 
     // The port and buad rate for flashing and monitoring your device
-    "esp_device_port": "/dev/cu.usbserial-0215E9B9",
+    "esp_device_port": "COM3",
     "esp_device_baud": 921600,
 
      // The tools needed for building, flashing, and debugging
