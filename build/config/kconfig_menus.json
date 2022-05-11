@@ -2025,7 +2025,7 @@
             {
                 "children": [],
                 "depends_on": null,
-                "help": "GPIO number (IOxx) to blink on and off.\n\nSome GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.\n\nGPIOs 35-39 are input-only so cannot be used as outputs.",
+                "help": "GPIO number (IOxx) to press and release button.\n\nSome GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.\n\nGPIOs 35-39 are input-only so cannot be used as outputs.",
                 "id": "BUTTON_GPIO",
                 "name": "BUTTON_GPIO",
                 "range": [
@@ -2033,6 +2033,32 @@
                     34
                 ],
                 "title": "Button GPIO number",
+                "type": "int"
+            },
+            {
+                "children": [],
+                "depends_on": null,
+                "help": "GPIO number (IOxx) for light sensor number 1.\n\nSome GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.\n\nGPIOs 35-39 are input-only so cannot be used as outputs.",
+                "id": "LIGHT1_GPIO",
+                "name": "LIGHT1_GPIO",
+                "range": [
+                    0,
+                    34
+                ],
+                "title": "Light 1 GPIO number",
+                "type": "int"
+            },
+            {
+                "children": [],
+                "depends_on": null,
+                "help": "GPIO number (IOxx) for light sensor number 2.\n\nSome GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.\n\nGPIOs 35-39 are input-only so cannot be used as outputs.",
+                "id": "LIGHT2_GPIO",
+                "name": "LIGHT2_GPIO",
+                "range": [
+                    0,
+                    34
+                ],
+                "title": "Light 2 GPIO number",
                 "type": "int"
             },
             {

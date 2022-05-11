@@ -16,11 +16,34 @@ menu "Example Configuration"
         range 0 34
         default 23
         help
-            GPIO number (IOxx) to blink on and off.
+            GPIO number (IOxx) to press and release button.
         
             Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
         
             GPIOs 35-39 are input-only so cannot be used as outputs.
+
+    config LIGHT1_GPIO
+        int " Light 1 GPIO number"
+        range 0 34
+        default 18
+        help
+            GPIO number (IOxx) for light sensor number 1.
+        
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        
+            GPIOs 35-39 are input-only so cannot be used as outputs.
+
+    
+    config LIGHT2_GPIO
+        int " Light 2 GPIO number"
+        range 0 34
+        default 26
+        help
+            GPIO number (IOxx) for light sensor number 2.
+        
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        
+            GPIOs 35-39 are input-only so cannot be used as outputs.        
 
     config BLINK_LENGTH
             int "Blink Length number"
