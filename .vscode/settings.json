@@ -28,9 +28,9 @@
      // The tools needed for building, flashing, and debugging
     // ONLY change your espressif tools path and esp-idf repo
     // location in the paths below
-    "idfInstFolder": "/Users/lucaf/.espressif",
+    "idfInstFolder": "/Users/matiuschairani/.espressif",
 
-    "idfFolder": "/Users/lucaf/esp/esp-idf",
+    "idfFolder": "/Users/matiuschairani/esp/esp-idf",
     
     "esp_python_bin": "${config:idfInstFolder}/python_env/idf4.4_py3.9_env/bin",
 
