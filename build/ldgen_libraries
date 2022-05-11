@@ -67,6 +67,7 @@ C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/mqtt/libmqtt.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/openssl/libopenssl.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/perfmon/libperfmon.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/spiffs/libspiffs.a
+C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/ssd1306/libssd1306.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/ulp/libulp.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/wifi_provisioning/libwifi_provisioning.a
 C:/Users/lucaf/Desktop/initial_blink/build/esp-idf/main/libmain.a

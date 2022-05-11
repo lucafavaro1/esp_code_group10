@@ -3,7 +3,10 @@
     "files.associations": {
         "sstream": "c",
         "sdkconfig.h": "c",
-        "task.h": "c"
+        "task.h": "c",
+        "gpio.h": "c",
+        "esp_log.h": "c",
+        "freertos.h": "c"
     },
     
     // The following items should be replaced throughout this file 
