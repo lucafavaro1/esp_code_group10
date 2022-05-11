@@ -8,14 +8,14 @@
 
 #define BLINK_GPIO CONFIG_BLINK_GPIO	// led -> 19
 #define BUTTON_GPIO CONFIG_BUTTON_GPIO // button -> 23
-//#define LIGHT1_GPIO CONFIG_LIGHT1_GPIO		// light 1 -> 18
-//#define LIGHT2_GPIO CONFIG_LIGHT2_GPIO		// light 2 -> 26
+#define LIGHT1_GPIO CONFIG_LIGHT1_GPIO		// light 1 -> 18
+#define LIGHT2_GPIO CONFIG_LIGHT2_GPIO		// light 2 -> 26
 #define BLINK_LENGTH CONFIG_BLINK_LENGTH
 #define BLINK_FREQ CONFIG_BLINK_FREQ
 
 static const char *TAG = "BLINK";
-//static const char *L1 = "LIGHT1";
-//static const char *L2 = "LIGHT2";
+static const char *L1 = "LIGHT1";
+static const char *L2 = "LIGHT2";
 
 
 void initDisplay() {
@@ -39,21 +39,28 @@ void app_main(void){
 	
 	ESP_ERROR_CHECK(gpio_set_direction(BLINK_GPIO, GPIO_MODE_INPUT_OUTPUT));	// set pin 19 as input and output
 	ESP_ERROR_CHECK(gpio_set_direction(BUTTON_GPIO, GPIO_MODE_INPUT));	// set pin 23 as input
-	//ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));	// set pin 18 as input
-	//ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));	// set pin 26 as input
+	ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));	// set pin 18 as input
+	ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));	// set pin 26 as input
 
-	initDisplay();
-	textDemo();
+	//initDisplay();
+	//textDemo();
 
-	// while(1) {
-	// 	int stateLight1 = gpio_get_level(LIGHT1_GPIO);
-	// 	int stateLight2 = gpio_get_level(LIGHT2_GPIO);
-	// 	if(stateLight1)
-	// 		ESP_LOGI(L1, "Something passing through barrier 1");
-	// 	if(stateLight2)
-	// 		ESP_LOGI(L2, "Something passing through barrier 2");
-	// 	vTaskDelay(10); // to avoid "task watchdog got triggered" erro
-	// }
+	int oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
+	int oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
+	while(1) {
+		int stateLight1 = gpio_get_level(LIGHT1_GPIO);
+		int stateLight2 = gpio_get_level(LIGHT2_GPIO);
+		if(oldStateLight1!=stateLight1) {
+			ESP_LOGI(L1, "The state of the barrier 1 changed");
+			!oldStateLight1;
+		}
+
+		if(oldStateLight2!=stateLight2) {
+			ESP_LOGI(L2, "The state of the barrier 2 changed");
+			!oldStateLight2;
+		}
+		vTaskDelay(10); // to avoid "task watchdog got triggered" erro
+	}
 
 	// // Version 1: one click led on, one click led off 
 	// int lastStateButton = gpio_get_level(BUTTON_GPIO);

@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/lucaf/esp/esp-idf/components/newlib
+# Install script for directory: C:/Espressif/frameworks/esp-idf-v4.4.1/components/newlib
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
