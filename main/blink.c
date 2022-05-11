@@ -6,88 +6,85 @@
 #include "esp_log.h"
 #include "ssd1306.h"
 
-#define BLINK_GPIO CONFIG_BLINK_GPIO	// those parameters are defined in sdkconfig.h
-#define BUTTON_GPIO CONFIG_BUTTON_GPIO
+#define BLINK_GPIO CONFIG_BLINK_GPIO	// led -> 19
+#define BUTTON_GPIO CONFIG_BUTTON_GPIO // button -> 23
+#define LIGHT1_GPIO CONFIG_LIGHT1_GPIO		// light 1 -> 18
+#define LIGHT2_GPIO CONFIG_LIGHT2_GPIO		// light 2 -> 26
 #define BLINK_LENGTH CONFIG_BLINK_LENGTH
 #define BLINK_FREQ CONFIG_BLINK_FREQ
 
 static const char *TAG = "BLINK";
+static const char *L1 = "LIGHT1";
+static const char *L2 = "LIGHT2";
+
+volatile uint8_t count = 0;
 
 void initDisplay() {
 	ssd1306_128x32_i2c_init();
 	ssd1306_setFixedFont(ssd1306xled_font6x8);
 }
 
-void textDemo() {
+// void textDemo() {
+// 	ssd1306_clearScreen();
+// 	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
+// 	ssd1306_negativeMode();
+// 	ssd1306_printFixedN(0, 16, (char*) count, STYLE_NORMAL, 1);
+// 	ssd1306_negativeMode();
+// 	delay(3000);
+// 	ssd1306_clearScreen();
+// }
+
+void updateCounter(int count) {
+	char buffer[20];
 	ssd1306_clearScreen();
-	ssd1306_printFixedN(0,0, "Example", STYLE_NORMAL,1);
-	ssd1306_negativeMode();
-	ssd1306_printFixedN(0,16, "Inverted", STYLE_NORMAL,1);
-	ssd1306_positiveMode();
-	delay(3000);
-	ssd1306_clearScreen();
+	itoa((int) count, buffer, 10);
+	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
+	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
+}
+
+void tryIncrement(bool state1, bool state2, bool *isIncremented) {
+	if (state1 && state2 && !*isIncremented) {
+		count++;
+		*isIncremented = true;
+		ESP_LOGI(TAG, "Count: %d", (int) count);
+		updateCounter(count);
+	} else if (!state1 && !state2) {
+		*isIncremented = false;
+	}
 }
 
 void app_main(void){
-	//esp_log_level_set("BLINK", ESP_LOG_ERROR);       
 	esp_log_level_set("BLINK", ESP_LOG_INFO);       
 	
 	ESP_ERROR_CHECK(gpio_set_direction(BLINK_GPIO, GPIO_MODE_INPUT_OUTPUT));	// set pin 19 as input and output
 	ESP_ERROR_CHECK(gpio_set_direction(BUTTON_GPIO, GPIO_MODE_INPUT));	// set pin 23 as input
-	
+	ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));	// set pin 18 as input
+	ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));	// set pin 26 as input
+
 	initDisplay();
-	textDemo();
-	
-	// // Version 1: one click led on, one click led off 
-	// int lastStateButton = gpio_get_level(BUTTON_GPIO);
+	updateCounter((int) count);
+	// textDemo();
 
-	// while(1) {
-	// 	int currentStateButton = gpio_get_level(BUTTON_GPIO);
-	// 	if(!currentStateButton && (currentStateButton != lastStateButton)) { // remember button pressed = level 0 
-	// 		int ledState = gpio_get_level(BLINK_GPIO);
-	// 		ESP_LOGI(TAG, "Change the LED state");
-	// 		ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, !ledState));
-	// 	}
-	// 	lastStateButton = currentStateButton;
-	// 	vTaskDelay(10);	// to avoid "task watchdog got triggered" error
-	// }
-	
-	
-	// // Version 2: while pressing led on, release button led off
-	
-	// while(1) {
-	// 	int stateButton = gpio_get_level(BUTTON_GPIO);
-	// 		if(!stateButton)
-	// 			ESP_LOGI(TAG, "Turning on the LED");
-	// 		else 
-	// 			ESP_LOGI(TAG, "Turning off the LED");
+	int oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
+	int oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
+	bool incremented = false;
 
-	// 	ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, !stateButton));
-	// 	vTaskDelay(10); // to avoid "task watchdog got triggered" error
-			
-	// }
-	
+	while(1) {
+		int stateLight1 = gpio_get_level(LIGHT1_GPIO);
+		int stateLight2 = gpio_get_level(LIGHT2_GPIO);
 
-	// // version led on and off setting length and frequency in menuconfig
-	
-	// for(int i=1;i<5;i++) {
-    //     // Blink on (output low) 
-	// 	ESP_LOGI(TAG, "Turning on the LED");
-	// 	ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, 1));
-	// 	vTaskDelay(1000 * BLINK_LENGTH / portTICK_PERIOD_MS);
+		if (oldStateLight1 != stateLight1) {
+			ESP_LOGI(L1, "The state of the barrier 1 changed from %d -> %d", oldStateLight1, stateLight1);
+			oldStateLight1 = stateLight1;
+		}
 
-    //     // Blink off (output high) 
-	// 	ESP_LOGI(TAG, "Turning off the LED");
-	// 	ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, 0));
-	// 	vTaskDelay(1000 * BLINK_FREQ / portTICK_PERIOD_MS);
-	// }
-	
-	// ESP_LOGI(TAG, "Final ON");
-	// ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, 1));
-	// vTaskDelay(1000 / portTICK_PERIOD_MS);
+		if (oldStateLight2 != stateLight2) {
+			ESP_LOGI(L2, "The state of the barrier 2 changed from %d -> %d", oldStateLight2, stateLight2);
+			oldStateLight2 = stateLight2;
+		}
 
-	// ESP_LOGI(TAG, "Final OFF");
-	// ESP_ERROR_CHECK(gpio_set_level(BLINK_GPIO, 0));
-	
+		tryIncrement(stateLight1, stateLight2, &incremented);
+
+		vTaskDelay(10); // to avoid "task watchdog got triggered" erro
+	}
 }
-
