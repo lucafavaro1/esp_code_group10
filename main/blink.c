@@ -19,20 +19,11 @@ static const char *L2 = "LIGHT2";
 
 volatile uint8_t count = 0;
 
+
 void initDisplay() {
 	ssd1306_128x32_i2c_init();
 	ssd1306_setFixedFont(ssd1306xled_font6x8);
 }
-
-// void textDemo() {
-// 	ssd1306_clearScreen();
-// 	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
-// 	ssd1306_negativeMode();
-// 	ssd1306_printFixedN(0, 16, (char*) count, STYLE_NORMAL, 1);
-// 	ssd1306_negativeMode();
-// 	delay(3000);
-// 	ssd1306_clearScreen();
-// }
 
 void updateCounter(int count) {
 	char buffer[20];
@@ -42,49 +33,67 @@ void updateCounter(int count) {
 	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
-void tryIncrement(bool state1, bool state2, bool *isIncremented) {
-	if (state1 && state2 && !*isIncremented) {
-		count++;
-		*isIncremented = true;
-		ESP_LOGI(TAG, "Count: %d", (int) count);
-		updateCounter(count);
-	} else if (!state1 && !state2) {
-		*isIncremented = false;
-	}
+// void tryIncrement(bool state1, bool state2, bool *isIncremented) {
+// 	if (state1 && state2 && !*isIncremented) {
+// 		count++;
+// 		*isIncremented = true;
+// 		ESP_LOGI(TAG, "Count: %d", (int) count);
+// 		updateCounter(count);
+// 	} else if (!state1 && !state2) {
+// 		*isIncremented = false;
+// 	}
+// }
+
+void light1Handler() {
+	count++;
+	ets_printf("Interrupt %d\n", count);
+
+}
+
+void light2Handler() {
+	count--;
+	ets_printf("Interrupt %d\n", count);
 }
 
 void app_main(void){
-	esp_log_level_set("BLINK", ESP_LOG_INFO);       
-	
+	esp_log_level_set("BLINK", ESP_LOG_INFO);
+
 	ESP_ERROR_CHECK(gpio_set_direction(BLINK_GPIO, GPIO_MODE_INPUT_OUTPUT));	// set pin 19 as input and output
 	ESP_ERROR_CHECK(gpio_set_direction(BUTTON_GPIO, GPIO_MODE_INPUT));	// set pin 23 as input
 	ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));	// set pin 18 as input
 	ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));	// set pin 26 as input
 
-	initDisplay();
-	updateCounter((int) count);
-	// textDemo();
+	ESP_LOGI(TAG, "INTERRUPT %d", (int) gpio_install_isr_service(0));
 
-	int oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
-	int oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
-	bool incremented = false;
+	gpio_set_intr_type(LIGHT1_GPIO, GPIO_INTR_NEGEDGE);
+	gpio_isr_handler_add(LIGHT1_GPIO, light1Handler, NULL);
 
-	while(1) {
-		int stateLight1 = gpio_get_level(LIGHT1_GPIO);
-		int stateLight2 = gpio_get_level(LIGHT2_GPIO);
+	gpio_set_intr_type(LIGHT2_GPIO, GPIO_INTR_NEGEDGE);
+	gpio_isr_handler_add(LIGHT2_GPIO, light2Handler, NULL);
 
-		if (oldStateLight1 != stateLight1) {
-			ESP_LOGI(L1, "The state of the barrier 1 changed from %d -> %d", oldStateLight1, stateLight1);
-			oldStateLight1 = stateLight1;
-		}
+	// initDisplay();
+	// updateCounter((int) count);
 
-		if (oldStateLight2 != stateLight2) {
-			ESP_LOGI(L2, "The state of the barrier 2 changed from %d -> %d", oldStateLight2, stateLight2);
-			oldStateLight2 = stateLight2;
-		}
+	// int oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
+	// int oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
+	// bool incremented = false;
 
-		tryIncrement(stateLight1, stateLight2, &incremented);
+	// while(1) {
+	// 	int stateLight1 = gpio_get_level(LIGHT1_GPIO);
+	// 	int stateLight2 = gpio_get_level(LIGHT2_GPIO);
 
-		vTaskDelay(10); // to avoid "task watchdog got triggered" erro
-	}
+	// 	if (oldStateLight1 != stateLight1) {
+	// 		ESP_LOGI(L1, "The state of the barrier 1 changed from %d -> %d", oldStateLight1, stateLight1);
+	// 		oldStateLight1 = stateLight1;
+	// 	}
+
+	// 	if (oldStateLight2 != stateLight2) {
+	// 		ESP_LOGI(L2, "The state of the barrier 2 changed from %d -> %d", oldStateLight2, stateLight2);
+	// 		oldStateLight2 = stateLight2;
+	// 	}
+
+	// 	tryIncrement(stateLight1, stateLight2, &incremented);
+
+		// vTaskDelay(10); // to avoid "task watchdog got triggered" erro
+	// }
 }
