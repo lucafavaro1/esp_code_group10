@@ -20,6 +20,8 @@ static const char *TAG = "BLINK";
 // static const char *L2 = "LIGHT2";
 
 volatile uint8_t count = 0;
+bool oldStateLight1, oldStateLight2, stateChanged;
+
 static TaskHandle_t taskHandle;
 
 void initDisplay() {
@@ -30,27 +32,52 @@ void initDisplay() {
 
 void printToDisplay(int number) {
     char buffer[1];
+    ssd1306_clearScreen();
  	itoa((int) number, buffer, 10);
  	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
  	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
 void showRoomState(void* pvParameters) {
-    uint8_t lastCount = -1;
+    int lastCount = -1;
+    bool stateLight1, stateLight2;
+    oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
+    oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
     while(1) {
+        stateLight1 = gpio_get_level(LIGHT1_GPIO);
+        stateLight2 = gpio_get_level(LIGHT2_GPIO);
+        if (stateLight1 != oldStateLight1 && stateLight1) {
+            if (stateLight2) {
+                count++;
+            }
+        }
+
+        if (stateLight2 != oldStateLight2 && stateLight2) {
+            if (stateLight1) {
+                count--;
+            }
+        }
+
         if (lastCount != count) {
-            lastCount = count;
+            lastCount = (int) count;
             printToDisplay(count);
         }
+
+        oldStateLight1 = stateLight1;
+        oldStateLight2 = stateLight2;
+
+        stateChanged = false;
     }
 }
 
 void light1Handler() {
-    count++;
+    // stateChanged = true;
+    // stateLight1 = gpio_get_level(LIGHT1_GPIO);
 }
 
 void light2Handler() {
-    count--;
+    // stateChanged = true;
+    // stateLight2 = gpio_get_level(LIGHT2_GPIO);
 }
 
 void app_main(void){
