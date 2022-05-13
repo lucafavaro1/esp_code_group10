@@ -18,48 +18,33 @@
 static const char *TAG = "BLINK";
 static const char *L1 = "LIGHT1";
 static const char *L2 = "LIGHT2";
-// static const uint8_t eventQueueLength = 5;
+static const uint8_t eventQueueLength = 5;
 
 volatile uint8_t count = 0;
-// static QueueHandle_t eventQueue;
+static QueueHandle_t eventQueue;
 
 void initDisplay() {
 	ssd1306_128x32_i2c_init();
 	ssd1306_setFixedFont(ssd1306xled_font6x8);
 }
 
-void updateCounter(int count) {
-	char buffer[1];
-	ssd1306_clearScreen16();
-	itoa((int) count, buffer, 10);
-	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
-	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
-}
-
-void showRoomState(void* pvParameters) {
-	// int item;
-	uint8_t lastCount = -1;
+void queueTest(void* pvParameters) {
+	int item;
 	while (1) {
-		// if (xQueueReceive(eventQueue, (void*) &item, 10) != pdTRUE) {
-		// 	ESP_LOGI(TAG, "Failed to read from queue", NULL);
-		// } else {
-		// 	ESP_LOGI(TAG, "Received message from Light %d", item);
-		// }
-		if (lastCount != count) {
-			lastCount = count;
-			updateCounter(lastCount);
+		if (xQueueReceive(eventQueue, (void*) &item, 10) != pdTRUE) {
+			// Throw error message
+		} else {
+			ESP_LOGI(TAG, "Received message from Light %d", item);
 		}
 	}
 }
 
 void light1Handler() {
-	count++;
-	// xQueueSendToBackFromISR(eventQueue, 1, 10);
+	xQueueSendToBackFromISR(eventQueue, 1, 10);
 }
 
 void light2Handler() {
-	count--;
-	// xQueueSendToBackFromISR(eventQueue, 2, 10);
+	xQueueSendToBackFromISR(eventQueue, 2, 10);
 }
 
 void app_main(void){
@@ -74,14 +59,14 @@ void app_main(void){
 
 	/* Queue */
 
-	// eventQueue = xQueueCreate(eventQueueLength, 5 * sizeof(uint8_t));
+	eventQueue = xQueueCreate(eventQueueLength, 5 * sizeof(uint8_t));
 
 	/* Display */
 
 	initDisplay();
 
 	xTaskCreate(
-			showRoomState,
+			queueTest,
 			"ShowRoomState",
 			1024,
 			NULL,
