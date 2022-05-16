@@ -8,25 +8,16 @@
 #include "esp_timer.h"
 #include "ssd1306.h"
 
-
-#define LIGHT1_GPIO CONFIG_LIGHT1_GPIO		// light 1 -> 18
-#define LIGHT2_GPIO CONFIG_LIGHT2_GPIO		// light 2 -> 26
-#define BLINK_LENGTH CONFIG_BLINK_LENGTH
-#define BLINK_FREQ CONFIG_BLINK_FREQ
-#define DEBOUNCE_TIME 0.5
+#define INNER_BARRIER_GPIO CONFIG_LIGHT1_GPIO // light 1 -> 18
+#define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 26
+#define DEBOUNCE_IN_MICROSEC 10
 
 static const char *TAG = "BLINK";
 
 volatile uint8_t count = 0;
-bool oldStateLight1 = false, oldStateLight2 = false;
-int countLight1 = 0, countLight2 = 0;
-
-int lastFlickerableState1 = LOW, lastFlickerableState2 = LOW;
-
-unsigned long lastDebounceTime1 = 0, lastDebounceTime2 = 0;
-
-
-static IRAM_ATTR TaskHandle_t taskHandle;
+volatile uint64_t outerBarrierLastStableTimestamp, innerBarrierLastStableTimestamp;
+static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
+static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
 void initDisplay() {
     ssd1306_128x32_i2c_init();
@@ -37,113 +28,38 @@ void initDisplay() {
 void IRAM_ATTR printToDisplay(int number) {
     char buffer[1];
     ssd1306_clearScreen();
- 	itoa((int) number, buffer, 10);
- 	ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
+ 	itoa((int) number, buffer, 10); // Convert int to char*
 	ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
+    ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
  	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
-// Version 1: cross both the sensors to get counted
 void IRAM_ATTR showRoomState(void* pvParameters) {
-    int lastCount = -1;
-    bool stateLight1, stateLight2;
+    // Do something
+}
 
-	uint8_t ulNotifiedValue;
-    
-	while(1) {
-        stateLight1 = gpio_get_level(LIGHT1_GPIO);
-        stateLight2 = gpio_get_level(LIGHT2_GPIO);
+void IRAM_ATTR outerBarrierTask() {
+    // Do calculations; expect to increment
+    // Call showRoomState()
+}
 
-        if (stateLight1 != oldStateLight1 && stateLight1) {
-            if (stateLight2) {
-                count++;
-            }
-        }
+void IRAM_ATTR innerBarrierTask() {
+    // Do calculations; expect to decrement
+    // TODO: Call showRoomState()
+}
 
-        if (stateLight2 != oldStateLight2 && stateLight2) {
-            if (stateLight1) {
-                if(count>0)
-				count--;
-            }
-        }
-
-		oldStateLight1 = stateLight1;
-        oldStateLight2 = stateLight2;
-
-        //ets_printf("Something before");
-
-        if (lastCount != count) {
-            lastCount = (int) count;
-            printToDisplay(count);
-			// xTaskNotifyWait(
-			// 	0x00,
-			// 	ULONG_MAX,
-			// 	&ulNotifiedValue,
-			// 	portMAX_DELAY
-			// );
-        }
-		
-		vTaskDelay(1);
-		//ets_printf("Something after");
-
+void IRAM_ATTR outerBarrierIsr() {
+    if (esp_timer_get_time() - outerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) {
+        ets_printf("%d: Outer barrier broken\n", (int) esp_timer_get_time());
+        // TODO: Wake outerBarrierTask()
     }
 }
 
-// Version 2: you cant cross both of them at the same time
-// void showRoomState(void* pvParameters) {
-//     int lastCount = -1;
-//     bool stateLight1, stateLight2;
-//     oldStateLight1 = gpio_get_level(LIGHT1_GPIO);
-//     oldStateLight2 = gpio_get_level(LIGHT2_GPIO);
-//     while(1) {
-// 		sense the state of the lights
-//         stateLight1 = gpio_get_level(LIGHT1_GPIO);
-//         stateLight2 = gpio_get_level(LIGHT2_GPIO);
-
-// 		if(stateLight1 != lastFlickerableState1) {
-// 			lastDebounceTime1 = esp_timer_get_time();
-// 			lastFlickerableState1 = stateLight1;
-// 		}
-
-// 		if(stateLight2 != lastFlickerableState2) {
-// 			lastDebounceTime2 = esp_timer_get_time();
-// 			lastFlickerableState2 = stateLight2;
-// 		}
-
-//         if (stateLight1 != oldStateLight1 && stateLight1) {
-//             if((esp_timer_get_time() - lastDebounceTime1) > DEBOUNCE_TIME) 
-// 				countLight1++;
-// 			if(countLight1!=0 && countLight2!=0) {
-// 				count++;
-// 				countLight1--;
-// 				countLight2--;
-// 			}
-//         }
-
-//         if (stateLight2 != oldStateLight2 && stateLight2) {
-//             if((esp_timer_get_time() - lastDebounceTime2) > DEBOUNCE_TIME)
-// 				countLight2++;
-// 			if(countLight1!=0 && countLight2!=0) {
-// 				if(count>0) 
-// 					count--;	
-// 				countLight1--;
-// 				countLight2--;
-// 			}
-// 		}
-
-//         if (lastCount != count) {
-//             lastCount = (int) count;
-//             printToDisplay(count);
-//         }
-
-//         oldStateLight1 = stateLight1;
-//         oldStateLight2 = stateLight2;
-
-//     }
-// }
-
-void IRAM_ATTR lightHandler() {
-    //xTaskNotify(taskHandle, 0, eNoAction);
+void IRAM_ATTR innerBarrierIsr() {
+    if (esp_timer_get_time() - innerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) {
+        ets_printf("%d: Inner barrier broken\n", (int) esp_timer_get_time());
+        // TODO: Wake innerBarrierTask();
+    }
 }
 
 void app_main(void){
@@ -151,25 +67,18 @@ void app_main(void){
 
     /* HW Setup */
 
-    ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));          // set pin 18 as input
-    ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));          // set pin 26 as input
+    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
+    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
+
+    /* Interrupts */
+
+    gpio_install_isr_service(0);
+ 	gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+ 	gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
+ 	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+ 	gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
 
     /* Display */
 
     initDisplay();
-
-    xTaskCreate(
-        showRoomState,
-        "showRoomState",
-        1024,
-        NULL,
-        1,
-        taskHandle
-    );
-
-    gpio_install_isr_service(0);
- 	gpio_set_intr_type(LIGHT1_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(LIGHT1_GPIO, lightHandler, NULL);
- 	gpio_set_intr_type(LIGHT2_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(LIGHT2_GPIO, lightHandler, NULL);
 }
