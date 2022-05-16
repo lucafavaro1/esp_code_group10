@@ -1,25 +1,25 @@
 menu "Example Configuration"
 
-    config BLINK_GPIO
-        int "Blink GPIO number"
+    config LIGHT1_GPIO
+        int " LIGHT 1 GPIO number"
         range 0 34
-        default 19
+        default 18
         help
             GPIO number (IOxx) to blink on and off.
-
+               
             Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
-
-            GPIOs 35-39 are input-only so cannot be used as outputs.
-    
-    config BUTTON_GPIO
-        int " Button GPIO number"
+              
+            GPIOs 35-39 are input-only so cannot be used as outputs.   
+                
+    config LIGHT2_GPIO
+        int " LIGHT 2 GPIO number"
         range 0 34
-        default 23
+        default 26
         help
             GPIO number (IOxx) to blink on and off.
-        
+                       
             Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
-        
+                      
             GPIOs 35-39 are input-only so cannot be used as outputs.
 
     config BLINK_LENGTH
