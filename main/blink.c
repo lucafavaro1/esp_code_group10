@@ -9,8 +9,6 @@
 #include "ssd1306.h"
 
 
-#define BLINK_GPIO CONFIG_BLINK_GPIO	// led -> 19
-#define BUTTON_GPIO CONFIG_BUTTON_GPIO // button -> 23
 #define LIGHT1_GPIO CONFIG_LIGHT1_GPIO		// light 1 -> 18
 #define LIGHT2_GPIO CONFIG_LIGHT2_GPIO		// light 2 -> 26
 #define BLINK_LENGTH CONFIG_BLINK_LENGTH
@@ -64,7 +62,8 @@ void IRAM_ATTR showRoomState(void* pvParameters) {
 
         if (stateLight2 != oldStateLight2 && stateLight2) {
             if (stateLight1) {
-                count--;
+                if(count>0)
+				count--;
             }
         }
 
@@ -84,6 +83,7 @@ void IRAM_ATTR showRoomState(void* pvParameters) {
 			// );
         }
 		
+		vTaskDelay(1);
 		//ets_printf("Something after");
 
     }
@@ -142,11 +142,7 @@ void IRAM_ATTR showRoomState(void* pvParameters) {
 //     }
 // }
 
-void IRAM_ATTR light1Handler() {
-    //xTaskNotify(taskHandle, 0, eNoAction);
-}
-
-void IRAM_ATTR light2Handler() {
+void IRAM_ATTR lightHandler() {
     //xTaskNotify(taskHandle, 0, eNoAction);
 }
 
@@ -155,8 +151,6 @@ void app_main(void){
 
     /* HW Setup */
 
-    ESP_ERROR_CHECK(gpio_set_direction(BLINK_GPIO, GPIO_MODE_INPUT_OUTPUT));    // set pin 19 as input and output
-    ESP_ERROR_CHECK(gpio_set_direction(BUTTON_GPIO, GPIO_MODE_INPUT));          // set pin 23 as input
     ESP_ERROR_CHECK(gpio_set_direction(LIGHT1_GPIO, GPIO_MODE_INPUT));          // set pin 18 as input
     ESP_ERROR_CHECK(gpio_set_direction(LIGHT2_GPIO, GPIO_MODE_INPUT));          // set pin 26 as input
 
@@ -175,7 +169,7 @@ void app_main(void){
 
     gpio_install_isr_service(0);
  	gpio_set_intr_type(LIGHT1_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(LIGHT1_GPIO, light1Handler, NULL);
+ 	gpio_isr_handler_add(LIGHT1_GPIO, lightHandler, NULL);
  	gpio_set_intr_type(LIGHT2_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(LIGHT2_GPIO, light2Handler, NULL);
+ 	gpio_isr_handler_add(LIGHT2_GPIO, lightHandler, NULL);
 }
