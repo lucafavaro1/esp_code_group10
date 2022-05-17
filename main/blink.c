@@ -16,6 +16,7 @@
 
 #define MEASURE_TICK_INTERVAL_MODE 1
 #define MEASURE_ISR_INTERVAL_MODE 2
+#define PEOPLE_COUNTER_MODE 3
 
 static const char *TAG = "BLINK";
 static const char *OUTER = "OUT";
@@ -25,10 +26,12 @@ static const char *INNER = "IN ";
  * IMPORTANT:
  * CHANGE THIS BEFORE RUNNING
  */
-static const uint8_t mode = MEASURE_ISR_INTERVAL_MODE;
+static const uint8_t mode = PEOPLE_COUNTER_MODE;
 
 volatile uint8_t count = 0;
-volatile uint64_t lastInterruptTs, lastStableOuterTs, lastStableInnerTs;
+volatile uint64_t lastInterruptTs = 0;
+volatile uint64_t lastStableOuterTs = 0;
+volatile uint64_t lastStableInnerTs = 0;
 static TaskHandle_t taskHandle1;
 static TaskHandle_t taskHandle2;
 
@@ -111,17 +114,75 @@ void IRAM_ATTR measureIsrInterval(int barrier) {
 
         lastInterruptTs = currentTime;
     } else {
-        ets_printf("DEBOUNCE\n");
+        ets_printf("DEBOUNCE %s\n", barrierName);
     }
 
 }
 
-void IRAM_ATTR outerBarrierIsr(void) {
-    // TODO
+void IRAM_ATTR outerTask(void) {
+    uint32_t barrier = 0;
+    while(1) {
+        if (barrier == 0) {
+            ets_printf("%s task sleeping..\n", OUTER);
+            xTaskNotifyWait(
+                ULONG_MAX,
+                ULONG_MAX,
+                &barrier,
+                portMAX_DELAY
+            );
+            ets_printf("%s barrier interrupted\n", OUTER);
+        } else {
+            barrier = 0;
+        }
+    }
 }
 
-void IRAM_ATTR innerBarrierIsr(void) {
-    // TODO
+void IRAM_ATTR innerTask(void) {
+    uint32_t barrier = 0;
+    while(1) {
+        if (barrier == 0) {
+            ets_printf("%s task sleeping..\n", INNER);
+            xTaskNotifyWait(
+                ULONG_MAX,
+                ULONG_MAX,
+                &barrier,
+                portMAX_DELAY
+            );
+            ets_printf("%s barrier interrupted\n", INNER);
+        } else {
+            barrier = 0;
+        }
+    }
+}
+
+void IRAM_ATTR outerIsr(void) {
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableOuterTs > DEBOUNCE_TIME_IN_MICROSECONDS) {
+        xTaskNotifyFromISR(
+            taskHandle1,
+            OUTER_BARRIER,
+            eNoAction,
+            NULL
+        );
+        lastStableOuterTs = currentTs;
+    } else {
+        ets_printf("DEBOUNCE %s\n", OUTER);
+    }
+}
+
+void IRAM_ATTR innerIsr(void) {
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableInnerTs > DEBOUNCE_TIME_IN_MICROSECONDS) {
+        xTaskNotifyFromISR(
+            taskHandle2,
+            INNER_BARRIER,
+            eNoAction,
+            NULL
+        );
+        lastStableInnerTs = currentTs;
+    } else {
+        ets_printf("DEBOUNCE %s\n", INNER);
+    }
 }
 
 void app_main(void){
@@ -157,6 +218,29 @@ void app_main(void){
     case MEASURE_ISR_INTERVAL_MODE:
         gpio_isr_handler_add(OUTER_BARRIER_GPIO, measureIsrInterval, OUTER_BARRIER);
         gpio_isr_handler_add(INNER_BARRIER_GPIO, measureIsrInterval, INNER_BARRIER);
+        break;
+
+    case PEOPLE_COUNTER_MODE:
+        xTaskCreatePinnedToCore(
+            outerTask,
+            "Outer Task",
+            2048,
+            NULL,
+            1,
+            &taskHandle1,
+            0
+        );
+        xTaskCreatePinnedToCore(
+            innerTask,
+            "Inner Task",
+            2048,
+            NULL,
+            1,
+            &taskHandle2,
+            1
+        );
+        gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerIsr, NULL);
+        gpio_isr_handler_add(INNER_BARRIER_GPIO, innerIsr, NULL);
         break;
 
     default:
