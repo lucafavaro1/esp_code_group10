@@ -12,13 +12,14 @@
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
 #define INNER_BARRIER 2
 #define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
+#define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in miliseconds
 
 #define MEASURE_TICK_INTERVAL_MODE 1
 #define MEASURE_ISR_INTERVAL_MODE 2
 
 static const char *TAG = "BLINK";
-static const char *OUTER = "OUTER";
-static const char *INNER = "INNER";
+static const char *OUTER = "OUT";
+static const char *INNER = "IN ";
 static const uint8_t mode = MEASURE_ISR_INTERVAL_MODE;
 
 volatile uint8_t count = 0;
@@ -55,10 +56,14 @@ void IRAM_ATTR measureTickInterval(void) {
     }
 }
 
-
+/* 
+ * FOR TEST PURPOSE ONLY. COMPLETE WALK THROUGH WITHINN 3 SECONDS.
+ * Use this to understand the critical time (i.e. time taken to trigger another barrier after the first is broken. 
+ */
 void IRAM_ATTR measureIsrInterval(int barrier) {
     uint64_t currentTime = esp_timer_get_time();
-    uint64_t lastStableTs;
+    uint64_t lastStableTs = 0;
+    uint64_t lastInterruptInterval = 0;
     char* barrierName = "";
     
     switch (barrier)
@@ -77,8 +82,30 @@ void IRAM_ATTR measureIsrInterval(int barrier) {
         break;
     }
 
-    ets_printf("%s: %d (+%d microseconds)\n", barrierName, (int) currentTime, (int) (currentTime - lastInterruptTs));
-    lastInterruptTs = currentTime;
+    if (currentTime - lastStableTs > DEBOUNCE_TIME_IN_MICROSECONDS) {
+        lastInterruptInterval = currentTime - lastInterruptTs;
+        if (lastInterruptInterval > 1000 * 3000) lastInterruptInterval = 0; // Reset if it takes too long (i.e. > 1 sec) 
+
+        ets_printf("%s: %d (+%d microseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval);
+        switch (barrier)
+        {
+        case OUTER_BARRIER:
+            lastStableOuterTs = currentTime;
+            break;
+
+        case INNER_BARRIER:
+            lastStableInnerTs = currentTime;
+            break;
+
+        default:
+            break;
+        }
+
+        lastInterruptTs = currentTime;
+    } else {
+        ets_printf("DEBOUNCE\n");
+    }
+
 }
 
 void IRAM_ATTR outerBarrierIsr(void) {
@@ -95,7 +122,7 @@ void app_main(void){
     /* HW Setup */
 
     ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
-    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
+    ESP_ERROR_CHECK(gpio_set_direction(INNER_BARRIER_GPIO, GPIO_MODE_INPUT));
 
     /* Interrupts */
 
