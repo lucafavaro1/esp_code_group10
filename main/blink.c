@@ -96,7 +96,7 @@ void IRAM_ATTR measureIsrInterval(int barrier) {
             lastInterruptInterval = 0; // Reset if it takes too long (> 3 sec)
             ets_printf("\n");
         }
-        ets_printf("%s: %d microseconds (+%d miliseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval / 1000);
+        ets_printf("%s: %d microseconds (+4%d miliseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval / 1000);
 
         switch (barrier)
         {
