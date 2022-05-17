@@ -132,6 +132,7 @@ void IRAM_ATTR outerTask(void) {
             );
             ets_printf("%s barrier interrupted\n", OUTER);
         } else {
+            // TODO: Add logic here
             barrier = 0;
         }
     }
@@ -150,6 +151,7 @@ void IRAM_ATTR innerTask(void) {
             );
             ets_printf("%s barrier interrupted\n", INNER);
         } else {
+            // TODO: Add logic here
             barrier = 0;
         }
     }
