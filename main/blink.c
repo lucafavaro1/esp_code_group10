@@ -20,6 +20,11 @@
 static const char *TAG = "BLINK";
 static const char *OUTER = "OUT";
 static const char *INNER = "IN ";
+
+/* 
+ * IMPORTANT:
+ * CHANGE THIS BEFORE RUNNING
+ */
 static const uint8_t mode = MEASURE_ISR_INTERVAL_MODE;
 
 volatile uint8_t count = 0;
@@ -84,9 +89,12 @@ void IRAM_ATTR measureIsrInterval(int barrier) {
 
     if (currentTime - lastStableTs > DEBOUNCE_TIME_IN_MICROSECONDS) {
         lastInterruptInterval = currentTime - lastInterruptTs;
-        if (lastInterruptInterval > 1000 * 3000) lastInterruptInterval = 0; // Reset if it takes too long (i.e. > 1 sec) 
+        if (lastInterruptInterval > 1000 * 3000) {
+            lastInterruptInterval = 0; // Reset if it takes too long (> 3 sec)
+            ets_printf("\n");
+        }
+        ets_printf("%s: %d microseconds (+%d miliseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval / 1000);
 
-        ets_printf("%s: %d (+%d microseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval);
         switch (barrier)
         {
         case OUTER_BARRIER:
@@ -127,8 +135,8 @@ void app_main(void){
     /* Interrupts */
 
     gpio_install_isr_service(0);
- 	gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+    gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+    gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
 
     /* Tasks */
 
