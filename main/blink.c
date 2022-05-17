@@ -44,10 +44,10 @@ void initDisplay() {
 void IRAM_ATTR showRoomState(void) {
     char buffer[1];
     ssd1306_clearScreen();
- 	itoa((int) count, buffer, 10); // Convert int to char*
-	ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
+    itoa((int) count, buffer, 10); // Convert int to char*
+    ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
     ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
- 	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
+    ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
 /*
