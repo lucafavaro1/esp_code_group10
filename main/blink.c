@@ -8,19 +8,23 @@
 #include "esp_timer.h"
 #include "ssd1306.h"
 
-#define INNER_BARRIER_GPIO CONFIG_LIGHT1_GPIO // light 1 -> 18
-#define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 26
-#define DEBOUNCE_IN_MICROSEC 20 // 10ms  
-// #define TASK_TIMEOUT_IN_MICROSEC 3e+6 // 3s
-#define TASK_TIMEOUT_IN_MICROSEC 3e+6 // 3s
+#define OUTER_BARRIER 1
+#define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
+#define INNER_BARRIER 2
+#define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
 
+#define MEASURE_TICK_INTERVAL_MODE 1
+#define MEASURE_ISR_INTERVAL_MODE 2
 
 static const char *TAG = "BLINK";
+static const char *OUTER = "OUTER";
+static const char *INNER = "INNER";
+static const uint8_t mode = MEASURE_ISR_INTERVAL_MODE;
 
 volatile uint8_t count = 0;
-volatile uint64_t outerBarrierLastStableTimestamp = 0, innerBarrierLastStableTimestamp = 0;
-static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
-static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
+volatile uint64_t lastInterruptTs, lastStableOuterTs, lastStableInnerTs;
+static TaskHandle_t taskHandle1;
+static TaskHandle_t taskHandle2;
 
 void initDisplay() {
     ssd1306_128x32_i2c_init();
@@ -28,7 +32,7 @@ void initDisplay() {
     ssd1306_clearScreen();
 }
 
-void IRAM_ATTR printToDisplay(void) {
+void IRAM_ATTR showRoomState(void) {
     char buffer[1];
     ssd1306_clearScreen();
  	itoa((int) count, buffer, 10); // Convert int to char*
@@ -37,190 +41,52 @@ void IRAM_ATTR printToDisplay(void) {
  	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
-void IRAM_ATTR showRoomState(void) {
-    printToDisplay();
+/*
+ * Function to print out the esp_timer_get_time() interval for the duration of 100 ticks.
+ */
+void IRAM_ATTR measureTickInterval(void) {
+    uint64_t currentTs = 0;
+    while (1) {
+        currentTs = esp_timer_get_time();
+        ets_printf("100 ticks = %d microseconds\n", (int) (currentTs - lastInterruptTs));
+        lastInterruptTs = currentTs;
+        count++;
+        vTaskDelay(100);
+    }
 }
 
-void IRAM_ATTR incrementTask(void* params) {
-    // Expect to increment
 
-    uint32_t triggerTimestamp = 0;
-    uint32_t pulNotificationValue = 0;
-    uint32_t initPul = 0;
-    bool selfBlock = false;
-    bool selfRestore = false;
-    bool peerBlock = false;
-    bool peerRestore = false;
-    bool reset = false;
-    uint32_t start = 0;
+void IRAM_ATTR measureIsrInterval(int barrier) {
+    uint64_t currentTime = esp_timer_get_time();
+    uint64_t lastStableTs;
+    char* barrierName = "";
+    
+    switch (barrier)
+    {
+    case OUTER_BARRIER:
+        lastStableTs  = lastStableOuterTs;
+        barrierName = OUTER;
+        break;
+    
+    case INNER_BARRIER:
+        lastStableTs = lastStableInnerTs;
+        barrierName = INNER;
+        break;
 
-    while (1) {
-        if (pulNotificationValue == 0) {
-            // ets_printf("Increment task sleeping..\n");
-            xTaskNotifyWait(
-                ULONG_LONG_MAX,
-                ULONG_LONG_MAX,
-                &pulNotificationValue,
-                portMAX_DELAY
-            );
-            // ets_printf("Increment task awake..\n");
-        } else {
-            if (!reset) reset = esp_timer_get_time() - triggerTimestamp > TASK_TIMEOUT_IN_MICROSEC;
-
-            if (reset) {
-                initPul = pulNotificationValue;
-                selfBlock = false;
-                selfRestore = false;
-                peerBlock = false;
-                peerRestore = false;
-                reset = false;
-                ets_printf("%d\n", pulNotificationValue);
-            }
-
-            switch (pulNotificationValue)
-            {
-                case 1:
-                    if (!selfBlock) {
-                        selfBlock = true;
-                        triggerTimestamp = esp_timer_get_time();
-                    } else if (!selfRestore && initPul == 1) {
-                        selfRestore = true;
-                    }
-                    break;
-                case 2:
-                    if (!peerBlock) {
-                        peerBlock = true;
-                    } else if (!peerRestore) {
-                        if (initPul == 1) {
-                            peerRestore = true;
-                        } else {
-                            triggerTimestamp = 0;
-                        }
-                    }
-                    break;
-                default:
-                    break;
-            }
-
-            ets_printf("%d, %d, %d, %d\n", selfBlock, selfRestore, peerBlock, peerRestore);
-
-            if (selfBlock && selfRestore && peerBlock && peerRestore) {
-                reset = true;
-                count++;
-                showRoomState();
-                ets_printf("+\n");
-            }
-
-            if (!reset) pulNotificationValue = 0; // Put to sleep again
-        }
+    default:
+        break;
     }
- }
 
-void IRAM_ATTR decrementTask(void* params) {
-    /// Expect to decrement
-
-    uint32_t triggerTimestamp = 0;
-    uint32_t pulNotificationValue = 0;
-    bool selfBlock = false;
-    bool selfRestore = false;
-    bool peerBlock = false;
-    bool peerRestore = false;
-    bool increment = false;
-
-    while (1) {
-        if (pulNotificationValue == 0) {
-            // ets_printf("Increment task sleeping..\n");
-            xTaskNotifyWait(
-                ULONG_LONG_MAX,
-                ULONG_LONG_MAX,
-                &pulNotificationValue,
-                portMAX_DELAY
-            );
-            // ets_printf("Increment task awake..\n");
-        } else {
-            if (increment || esp_timer_get_time() - triggerTimestamp > TASK_TIMEOUT_IN_MICROSEC) {
-                selfBlock = false;
-                selfRestore = false;
-                peerBlock = false;
-                peerRestore = false;
-                increment = false;
-            }
-
-            switch (pulNotificationValue)
-            {
-                case 2:
-                    if (!selfBlock) {
-                        selfBlock = true;
-                        triggerTimestamp = esp_timer_get_time();
-                    } else if (!selfRestore) {
-                        selfRestore = true;
-                    }
-                    break;
-                case 1:
-                    if (selfBlock && !peerBlock) {
-                        peerBlock = true;
-                    }
-                    break;
-                default:
-                    break;
-            }
-
-            // ets_printf("%d, %d, %d, %d\n", selfBlock, selfRestore, peerBlock, peerRestore);
-
-            if (selfBlock && selfRestore && peerBlock) {
-                increment = true;
-                if (count > 0) count--;
-                showRoomState();
-                // ets_printf("-");
-            }
-            
-            pulNotificationValue = 0; // Put to sleep again
-        }
-    }
+    ets_printf("%s: %d (+%d microseconds)\n", barrierName, (int) currentTime, (int) (currentTime - lastInterruptTs));
+    lastInterruptTs = currentTime;
 }
 
 void IRAM_ATTR outerBarrierIsr(void) {
-    uint64_t currentTime = esp_timer_get_time();
-    if (currentTime - outerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) { // Can replace with xTaskNotifyClear() if available
-        xTaskNotifyFromISR(
-            outerBarrierTaskHandle, 
-            1, 
-            eSetBits, 
-            NULL);
-        portYIELD_FROM_ISR();
-        
-        // xTaskNotifyFromISR(
-        //     innerBarrierTaskHandle, 
-        //     1, 
-        //     eSetBits, 
-        //     NULL);
-        // portYIELD_FROM_ISR();
-
-        outerBarrierLastStableTimestamp = currentTime;
-    } else {
-        ets_printf("DEBOUNCED\n");
-    }
+    // TODO
 }
 
 void IRAM_ATTR innerBarrierIsr(void) {
-    uint64_t currentTime = esp_timer_get_time();
-    if (currentTime - innerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) {
-        xTaskNotifyFromISR(
-            outerBarrierTaskHandle, 
-            2, 
-            eSetBits, 
-            NULL);
-        portYIELD_FROM_ISR();
-
-        // xTaskNotifyFromISR(
-        //     innerBarrierTaskHandle, 
-        //     2, 
-        //     eSetBits, 
-        //     NULL);
-        // portYIELD_FROM_ISR();
-
-        innerBarrierLastStableTimestamp = currentTime;
-    }
+    // TODO
 }
 
 void app_main(void){
@@ -235,31 +101,32 @@ void app_main(void){
 
     gpio_install_isr_service(0);
  	gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
  	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
- 	gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
 
     /* Tasks */
 
-    xTaskCreatePinnedToCore(
-        incrementTask,
-        "Outer Barrier Task",
-        4096,
-        NULL,
-        1,
-        &outerBarrierTaskHandle,
-        0
-    );
+    switch (mode)
+    {
+    case MEASURE_TICK_INTERVAL_MODE:
+        xTaskCreatePinnedToCore(
+            measureTickInterval,
+            "Measure tick interval",
+            2048,
+            NULL,
+            1,
+            &taskHandle1,
+            0
+        );
+        break;
+    
+    case MEASURE_ISR_INTERVAL_MODE:
+        gpio_isr_handler_add(OUTER_BARRIER_GPIO, measureIsrInterval, OUTER_BARRIER);
+        gpio_isr_handler_add(INNER_BARRIER_GPIO, measureIsrInterval, INNER_BARRIER);
+        break;
 
-    xTaskCreatePinnedToCore(
-        decrementTask,
-        "Inner Barrier Task",
-        4096,
-        NULL,
-        1,
-        &innerBarrierTaskHandle,
-        1
-    );
+    default:
+        break;
+    }
 
     /* Display */
 
