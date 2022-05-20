@@ -8,35 +8,18 @@
 #include "esp_timer.h"
 #include "ssd1306.h"
 
-#define OUTER_BARRIER 1
-#define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
-#define INNER_BARRIER 2
-#define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
-#define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in miliseconds
-#define TASK_WAIT_TIME_IN_MICROSECONDS 1000 * 3000 // in miliseconds
+#define INNER_BARRIER_GPIO CONFIG_LIGHT1_GPIO // light 1 -> 18
+#define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 26
+#define DEBOUNCE_IN_MICROSEC 20 // 10ms
+#define TASK_TIMEOUT_IN_MICROSEC 1000 * 3000 // 3s
 
-#define MEASURE_TICK_INTERVAL_MODE 1
-#define MEASURE_ISR_INTERVAL_MODE 2
-#define PEOPLE_COUNTER_MODE 3
 
 static const char *TAG = "BLINK";
-static const char *OUTER = "OUT";
-static const char *INNER = "IN ";
-
-/* 
- * IMPORTANT:
- * CHANGE THIS BEFORE RUNNING
- */
-static const uint8_t mode = MEASURE_ISR_INTERVAL_MODE;
 
 volatile uint8_t count = 0;
-volatile uint64_t lastInterruptTs = 0;
-volatile uint64_t lastStableOuterTs = 0;
-volatile uint64_t lastStableInnerTs = 0;
-volatile bool lockOuterTask = false;
-volatile bool lockInnerTask = false;
-static TaskHandle_t taskHandle1;
-static TaskHandle_t taskHandle2;
+volatile uint64_t outerBarrierLastStableTimestamp = 0, innerBarrierLastStableTimestamp = 0;
+static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
+static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
 void initDisplay() {
     ssd1306_128x32_i2c_init();
@@ -44,220 +27,173 @@ void initDisplay() {
     ssd1306_clearScreen();
 }
 
-void IRAM_ATTR showRoomState(void) {
+void IRAM_ATTR printToDisplay(void) {
     char buffer[1];
     ssd1306_clearScreen();
-    itoa((int) count, buffer, 10); // Convert int to char*
-    ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
+ 	itoa((int) count, buffer, 10); // Convert int to char*
+	ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
     ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
-    ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
+ 	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
-/*
- * Function to print out the esp_timer_get_time() interval for the duration of 100 ticks.
- */
-void IRAM_ATTR measureTickInterval(void) {
-    uint64_t currentTs = 0;
+void IRAM_ATTR showRoomState(void) {
+    printToDisplay();
+}
+
+void IRAM_ATTR incrementTask(void* params) {
+    // Expect to increment
+    // This means the sequence must follow: outer (1) -> inner (2) -> outer (1) -> outer (2)
+    const int modelSequence[4] = [1, 2, 1, 2];
+    uint64_t wakeTime = 0;
+    uint32_t pulNotificationValue = 0;
+    int sequenceArray[4] = []
+    int sequenceCount = 0;
+    bool canIncrement = true;
     while (1) {
-        currentTs = esp_timer_get_time();
-        ets_printf("100 ticks = %d microseconds\n", (int) (currentTs - lastInterruptTs));
-        lastInterruptTs = currentTs;
-        count++;
-        vTaskDelay(100);
+        if (!pulNotificationValue) {
+            xTaskNotifyWait(
+                ULONG_MAX,
+                ULONG_MAX,
+                &pulNotificationValue,
+                portMAX_DELAY
+            );
+        } else {
+            if (pulNotificationValue == -1 || esp_timer_get_time() - wakeTime > TASK_TIMEOUT_IN_MICROSEC) {
+                sequenceCount = 0;
+            }
+            switch(pulNotificationValue) {
+            case -1: // Forced to reset by other task
+                if (count == 2) sequenceCount = 0; // Only reset if other task has state [2, 1, 2, x]
+                break;
+            default:
+                sequenceArray[sequenceCount] = pulNotificationValue;
+                sequenceCount++;
+                break;
+            }
+
+            // Check if criteria matches
+            canIncrement = true;
+            if (sequenceCount == 3) {
+                for (int i = 0; i < sequenceCount; i++) {
+                    if (sequenceArray[i] != modelSequence[i]) {
+                        canIncrement = false;
+                    }
+                    if (canDecrement && i == 3) {
+                        count++;
+                        sequenceCount = 0;
+                        xTaskNotify(
+                            innerBarrierTaskHandle,
+                            -1,
+                            eSetBits,
+                            NULL);
+                    }
+                }
+            }
+
+            pulNotificationValue = 0; // Put the task to sleep
+        }
+    }
+ }
+
+void IRAM_ATTR decrementTask(void* params) {
+    // Expect to decrement
+    // This means the sequence must follow: inner (2) -> outer (1) -> inner (2) -> outer (1)
+    const int modelSequence[4] = [2, 1, 2, 1];
+    uint64_t wakeTime = 0;
+    uint32_t pulNotificationValue = 0;
+    int sequenceArray[4] = []
+    int sequenceCount = 0;
+    bool canDecrement = true;
+    while (1) {
+        if (!pulNotificationValue) {
+            xTaskNotifyWait(
+                ULONG_MAX,
+                ULONG_MAX,
+                &pulNotificationValue,
+                portMAX_DELAY
+            );
+        } else {
+            if (pulNotificationValue == -1 || esp_timer_get_time() - wakeTime > TASK_TIMEOUT_IN_MICROSEC) {
+                sequenceCount = 0;
+            }
+            switch(pulNotificationValue) {
+            case -1: // Forced to reset by other task
+                if (count == 2) sequenceCount = 0; // Only reset if other task has state [1, 2, 1, x]
+                break;
+            default:
+                sequenceArray[sequenceCount] = pulNotificationValue;
+                sequenceCount++;
+                break;
+            }
+
+            // Check if criteria matches
+            canDecrement = true;
+            if (sequenceCount == 3) {
+                for (int i = 0; i < sequenceCount; i++) {
+                    if (sequenceArray[i] != modelSequence[i]) {
+                        canDecrement = false;
+                    }
+                    if (canDecrement && i == 3) {
+                        if (count > 0) count--;
+                        sequenceCount = 0;
+                        xTaskNotify(
+                            outerBarrierTaskHandle,
+                            -1,
+                            eSetBits,
+                            NULL);
+                    }
+                }
+            }
+
+            pulNotificationValue = 0; // Put the task to sleep
+        }
     }
 }
 
-/* 
- * FOR TEST PURPOSE ONLY. COMPLETE WALK THROUGH WITHINN 3 SECONDS.
- * Use this to understand the critical time (i.e. time taken to trigger another barrier after the first is broken. 
- */
-void IRAM_ATTR measureIsrInterval(int barrier) {
+void IRAM_ATTR outerBarrierIsr(void) {
     uint64_t currentTime = esp_timer_get_time();
-    uint64_t lastStableTs = 0;
-    uint64_t lastInterruptInterval = 0;
-    char* barrierName = "";
-    
-    switch (barrier)
-    {
-    case OUTER_BARRIER:
-        lastStableTs  = lastStableOuterTs;
-        barrierName = OUTER;
-        break;
-    
-    case INNER_BARRIER:
-        lastStableTs = lastStableInnerTs;
-        barrierName = INNER;
-        break;
-
-    default:
-        break;
-    }
-
-    if (currentTime - lastStableTs > DEBOUNCE_TIME_IN_MICROSECONDS) {
-        lastInterruptInterval = currentTime - lastInterruptTs;
-        if (lastInterruptInterval > 1000 * 3000) {
-            lastInterruptInterval = 0; // Reset if it takes too long (> 3 sec)
-            ets_printf("\n");
-        }
-        ets_printf("%s: %d microseconds (+%d miliseconds)\n", barrierName, (int) currentTime, (int) lastInterruptInterval / 1000);
-
-        switch (barrier)
-        {
-        case OUTER_BARRIER:
-            lastStableOuterTs = currentTime;
-            break;
-
-        case INNER_BARRIER:
-            lastStableInnerTs = currentTime;
-            break;
-
-        default:
-            break;
-        }
-
-        lastInterruptTs = currentTime;
-    } else {
-        ets_printf("DEBOUNCE %s\n", barrierName);
-    }
-
-}
-
-void IRAM_ATTR outerTask(void) {
-    uint32_t barrier = 0;
-    uint64_t wakeTime = 0;
-    bool waitingForRelease = false;
-    while(1) {
-        if (barrier == 0) {
-            ets_printf("%s task sleeping..\n", OUTER);
-            lockOuterTask = false;
-            waitingForRelease = false;
-            xTaskNotifyWait(
-                ULONG_MAX,
-                ULONG_MAX,
-                &barrier,
-                portMAX_DELAY
-            );
-            lockOuterTask = true;
-            wakeTime = esp_timer_get_time();
-            ets_printf("%s barrier interrupted with value %d\n", OUTER, barrier);
-        } else {
-            // TODO: Add logic here
-            if (gpio_get_level(OUTER_BARRIER_GPIO) && gpio_get_level(INNER_BARRIER_GPIO)) {
-                waitingForRelease = true;
-            }
-
-            if (waitingForRelease) {
-                if (!gpio_get_level(OUTER_BARRIER_GPIO)) {
-                    ets_printf("+\n");
-                    count++;
-                    showRoomState();
-                    barrier = 0;
-                } else if (!gpio_get_level(INNER_BARRIER_GPIO)) {
-                    barrier = 0;
-                }
-            }
-
-            if (esp_timer_get_time() - wakeTime > TASK_WAIT_TIME_IN_MICROSECONDS) {
-                barrier = 0;
-                ets_printf("%s timeout\n", OUTER);
-            }
-
-            vTaskDelay(10); // Wait 10 ticks
-        }
-    }
-}
-
-void IRAM_ATTR innerTask(void) {
-    uint32_t barrier = 0;
-    uint64_t wakeTime = 0;
-    bool waitingForRelease = false;
-    while(1) {
-        if (barrier == 0) {
-            ets_printf("%s task sleeping..\n", INNER);
-            lockInnerTask = false;
-            waitingForRelease = false;
-            xTaskNotifyWait(
-                ULONG_MAX,
-                ULONG_MAX,
-                &barrier,
-                portMAX_DELAY
-            );
-            lockInnerTask = true;
-            wakeTime = esp_timer_get_time();
-            ets_printf("%s barrier interrupted with value %d\n", INNER, barrier);
-        } else {
-            // TODO: Add logic here
-            if (gpio_get_level(OUTER_BARRIER_GPIO) && gpio_get_level(INNER_BARRIER_GPIO)) {
-                waitingForRelease = true;
-            }
-
-            if (waitingForRelease) {
-                if (!gpio_get_level(INNER_BARRIER_GPIO)) {
-                    ets_printf("-\n");
-                    if (count > 0) count--;
-                    showRoomState();
-                    barrier = 0;
-                } else if (!gpio_get_level(OUTER_BARRIER_GPIO)) {
-                    barrier = 0;
-                }
-            }
-
-            if (esp_timer_get_time() - wakeTime > TASK_WAIT_TIME_IN_MICROSECONDS) {
-                barrier = 0;
-                ets_printf("%s timeout\n", INNER);
-            }
-
-            vTaskDelay(10); // Wait 10 ticks
-        }
-    }
-    // uint32_t barrier = 0;
-    // while(1) {
-    //     if (barrier == 0) {
-    //         ets_printf("%s task sleeping..\n", INNER);
-    //         lockInnerTask = false;
-    //         xTaskNotifyWait(
-    //             ULONG_MAX,
-    //             ULONG_MAX,
-    //             &barrier,
-    //             portMAX_DELAY
-    //         );
-    //         lockInnerTask = true;
-    //         ets_printf("%s barrier interrupted\n", INNER);
-    //     } else {
-    //         // TODO: Add logic here
-
-    //         // barrier = 0;
-    //     }
-    // }
-}
-
-void IRAM_ATTR outerIsr(void) {
-    uint64_t currentTs = esp_timer_get_time();
-    if (currentTs - lastStableOuterTs > DEBOUNCE_TIME_IN_MICROSECONDS && !lockOuterTask) {
+    if (currentTime - outerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) { // Can replace with xTaskNotifyClear() if available
         xTaskNotifyFromISR(
-            taskHandle1,
+            outerBarrierTaskHandle,
             1,
             eSetBits,
-            NULL
-        );
-        lastStableOuterTs = currentTs;
+            NULL);
+
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            1,
+            eSetBits,
+            NULL);
+
+        outerBarrierLastStableTimestamp = currentTime;
     } else {
-        ets_printf("DEBOUNCE %s\n", OUTER);
+        ets_printf("DEBOUNCED\n");
     }
 }
 
-void IRAM_ATTR innerIsr(void) {
-    uint64_t currentTs = esp_timer_get_time();
-    if (currentTs - lastStableInnerTs > DEBOUNCE_TIME_IN_MICROSECONDS && !lockInnerTask) {
+void IRAM_ATTR innerBarrierIsr(void) {
+    uint64_t currentTime = esp_timer_get_time();
+    if (currentTime - innerBarrierLastStableTimestamp > DEBOUNCE_IN_MICROSEC) {
         xTaskNotifyFromISR(
-            taskHandle2,
-            INNER_BARRIER,
+            outerBarrierTaskHandle,
+            2,
             eSetBits,
-            NULL
-        );
-        lastStableInnerTs = currentTs;
-    } else {
-        ets_printf("DEBOUNCE %s\n", INNER);
+            NULL);
+        portYIELD_FROM_ISR();
+
+        xTaskNotifyFromISR(
+            outerBarrierTaskHandle,
+            2,
+            eSetBits,
+            NULL);
+
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            2,
+            eSetBits,
+            NULL);
+
+        innerBarrierLastStableTimestamp = currentTime;
     }
 }
 
@@ -267,66 +203,37 @@ void app_main(void){
     /* HW Setup */
 
     ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
-    ESP_ERROR_CHECK(gpio_set_direction(INNER_BARRIER_GPIO, GPIO_MODE_INPUT));
-
-    gpio_pullup_en(OUTER_BARRIER_GPIO);
-    gpio_pullup_en(INNER_BARRIER_GPIO);
-    gpio_pulldown_dis(INNER_BARRIER_GPIO);
-    gpio_pulldown_dis(OUTER_BARRIER_GPIO);
+    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
 
     /* Interrupts */
 
     gpio_install_isr_service(0);
-    gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_POSEDGE);
-    gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_POSEDGE);
+ 	gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+ 	gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
+ 	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+ 	gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
 
     /* Tasks */
 
-    switch (mode)
-    {
-    case MEASURE_TICK_INTERVAL_MODE:
-        xTaskCreatePinnedToCore(
-            measureTickInterval,
-            "Measure tick interval",
-            2048,
-            NULL,
-            1,
-            &taskHandle1,
-            0
-        );
-        break;
-    
-    case MEASURE_ISR_INTERVAL_MODE:
-        gpio_isr_handler_add(OUTER_BARRIER_GPIO, measureIsrInterval, OUTER_BARRIER);
-        gpio_isr_handler_add(INNER_BARRIER_GPIO, measureIsrInterval, INNER_BARRIER);
-        break;
+    xTaskCreatePinnedToCore(
+        incrementTask,
+        "Outer Barrier Task",
+        4096,
+        NULL,
+        1,
+        &outerBarrierTaskHandle,
+        0
+    );
 
-    case PEOPLE_COUNTER_MODE:
-        xTaskCreatePinnedToCore(
-            outerTask,
-            "Outer Task",
-            1024,
-            NULL,
-            1,
-            &taskHandle1,
-            0
-        );
-        xTaskCreatePinnedToCore(
-            innerTask,
-            "Inner Task",
-            1024,
-            NULL,
-            1,
-            &taskHandle2,
-            1
-        );
-        gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerIsr, NULL);
-        gpio_isr_handler_add(INNER_BARRIER_GPIO, innerIsr, NULL);
-        break;
-
-    default:
-        break;
-    }
+    xTaskCreatePinnedToCore(
+        decrementTask,
+        "Inner Barrier Task",
+        4096,
+        NULL,
+        1,
+        &innerBarrierTaskHandle,
+        1
+    );
 
     /* Display */
 
