@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "ssd1306.h"
+//#include "time.h"
 
 #define OUTER_BARRIER 1
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
@@ -18,7 +19,6 @@
 static const char *OUTER = "OUT";
 static const char *INNER = "IN ";
 
-
 volatile uint8_t count = 0;
 volatile uint64_t lastInterruptTs = 0;
 volatile uint64_t lastStableOuterTs = 0;
@@ -28,12 +28,21 @@ volatile bool lockInnerTask = false;
 static TaskHandle_t taskHandle1;
 static TaskHandle_t taskHandle2;
 
-void initDisplay()
-{
+void initDisplay() {
     ssd1306_128x32_i2c_init();
     ssd1306_setFixedFont(ssd1306xled_font6x8);
     ssd1306_clearScreen();
 }
+
+// void printLocalTime()
+// {
+//   struct tm timeinfo;
+//   if(!getLocalTime(&timeinfo)){
+//     Serial.println("Failed to obtain time");
+//     return;
+//   }
+//   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+// }
 
 void showRoomState(void)
 {
@@ -71,55 +80,70 @@ void outerTask(void)
         }
         else
         {
-            stateTimeline[0] = 1;
+            stateTimeline[0] = gpio_get_level(OUTER_BARRIER_GPIO);
             stateTimeline[1] = gpio_get_level(INNER_BARRIER_GPIO);
-            oldStateOuter = stateTimeline[0];
-            oldStateInner = stateTimeline[1];
-            int i = 2;
+            // case in which is triggered by the opposite size, so the first measurement is [1,1] instead of [1,0]
+            // because you are moving out
+            if (stateTimeline[0] == 1 && stateTimeline[1] == 1) {
+                ets_printf("\n OUTER BEGIN 1:1 CASE \n");
+                barrier = 0;
+            }
 
-            while (esp_timer_get_time() - wakeTime < TASK_WAIT_TIME_IN_MICROSECONDS && i < 8)
+            if (barrier != 0)
             {
-                int currentOuter = gpio_get_level(OUTER_BARRIER_GPIO);
-                int currentInner = gpio_get_level(INNER_BARRIER_GPIO);
-                if (currentOuter != oldStateOuter)
+                oldStateOuter = stateTimeline[0];
+                oldStateInner = stateTimeline[1];
+                int i = 2;
+
+                while (esp_timer_get_time() - wakeTime < TASK_WAIT_TIME_IN_MICROSECONDS && i < 8)
                 {
-                    oldStateOuter = currentOuter;
-                    stateTimeline[i] = oldStateOuter;
-                    stateTimeline[i + 1] = oldStateInner;
-                    i = i + 2;
+                    int currentOuter = gpio_get_level(OUTER_BARRIER_GPIO);
+                    int currentInner = gpio_get_level(INNER_BARRIER_GPIO);
+                    if(currentInner == currentOuter && currentInner == 0 && i!=6) {
+                        ets_printf("\n GOTO EXIT CYCLE \n");
+                        goto endCycle;
+                    }
+                    
+                    if (currentOuter != oldStateOuter)
+                    {
+                        oldStateOuter = currentOuter;
+                        stateTimeline[i] = oldStateOuter;
+                        stateTimeline[i + 1] = oldStateInner;
+                        i = i + 2;
+                    }
+                    else if (currentInner != oldStateInner)
+                    {
+                        oldStateInner = currentInner;
+                        stateTimeline[i] = oldStateOuter;
+                        stateTimeline[i + 1] = oldStateInner;
+                        i = i + 2;
+                    }
                 }
-                else if (currentInner != oldStateInner)
+
+                ets_printf("OUTER: Before printing the array (right is 1 0 1 1 0 1 0 0) \n");
+
+                for (int j = 0; j < 8; j = j + 2)
                 {
-                    oldStateInner = currentInner;
-                    stateTimeline[i] = oldStateOuter;
-                    stateTimeline[i + 1] = oldStateInner;
-                    i = i + 2;
+                    ets_printf("[%d, %d]", stateTimeline[j], stateTimeline[j + 1]);
                 }
+
+                bool rightTimeline[8] = {1, 0, 1, 1, 0, 1, 0, 0};
+                int counterEquals = 0;
+
+                for (int j = 0; j < 8; j++)
+                {
+                    if (stateTimeline[j] == rightTimeline[j])
+                        counterEquals++;
+                }
+
+                if (counterEquals == 8)
+                {
+                    count++;
+                    showRoomState();
+                }
+                endCycle:
+                barrier = 0;
             }
-
-            ets_printf("OUTER: Before printing the array (right is 1 0 1 1 0 1 0 0) \n");
-
-            for (int j = 0; j < 8; j = j + 2)
-            {
-                ets_printf("[%d, %d]", stateTimeline[j], stateTimeline[j + 1]);
-            }
-
-            bool rightTimeline[8] = {1, 0, 1, 1, 0, 1, 0, 0};
-            int counterEquals = 0;
-
-            for (int j = 0; j < 8; j++)
-            {
-                if (stateTimeline[j] == rightTimeline[j])
-                    counterEquals++;
-            }
-
-            if (counterEquals == 8)
-            {
-                count++;
-                showRoomState();
-            }
-            barrier = 0;
-
             vTaskDelay(10); // Wait 10 ticks
         }
     }
@@ -152,55 +176,70 @@ void innerTask(void)
         else
         {
             stateTimeline[0] = gpio_get_level(OUTER_BARRIER_GPIO);
-            stateTimeline[1] = 1;
-            oldStateOuter = stateTimeline[0];
-            oldStateInner = stateTimeline[1];
-            int i = 2;
+            stateTimeline[1] = gpio_get_level(INNER_BARRIER_GPIO);
+            // case in which is triggered by the opposite size, so the first measurement is [1,1] instead of [0,1]
+            // because you are moving in
+            if (stateTimeline[0] == 1 && stateTimeline[1] == 1) {
+                barrier = 0;
+                ets_printf("\n INNER BEGIN 1:1 CASE \n");
+            }   
 
-            while (esp_timer_get_time() - wakeTime < TASK_WAIT_TIME_IN_MICROSECONDS && i < 8)
+            if (barrier != 0)
             {
-                int currentOuter = gpio_get_level(OUTER_BARRIER_GPIO);
-                int currentInner = gpio_get_level(INNER_BARRIER_GPIO);
-                if (currentOuter != oldStateOuter)
+                oldStateOuter = stateTimeline[0];
+                oldStateInner = stateTimeline[1];
+                int i = 2;
+
+                while (esp_timer_get_time() - wakeTime < TASK_WAIT_TIME_IN_MICROSECONDS && i < 8)
                 {
-                    oldStateOuter = currentOuter;
-                    stateTimeline[i] = oldStateOuter;
-                    stateTimeline[i + 1] = oldStateInner;
-                    i = i + 2;
+                    int currentOuter = gpio_get_level(OUTER_BARRIER_GPIO);
+                    int currentInner = gpio_get_level(INNER_BARRIER_GPIO);
+                    if(currentInner == currentOuter && currentInner == 0 && i!=6) {
+                        ets_printf("\n GOTO EXIT CYCLE \n");
+                        goto endCycle;
+                    }
+                 
+                    if (currentOuter != oldStateOuter)
+                    {
+                        oldStateOuter = currentOuter;
+                        stateTimeline[i] = oldStateOuter;
+                        stateTimeline[i + 1] = oldStateInner;
+                        i = i + 2;
+                    }
+                    else if (currentInner != oldStateInner)
+                    {
+                        oldStateInner = currentInner;
+                        stateTimeline[i] = oldStateOuter;
+                        stateTimeline[i + 1] = oldStateInner;
+                        i = i + 2;
+                    }
                 }
-                else if (currentInner != oldStateInner)
+
+                ets_printf("INNER: Before printing the array (right is 0 1 1 1 1 0 0 0) \n");
+
+                for (int j = 0; j < 8; j = j + 2)
                 {
-                    oldStateInner = currentInner;
-                    stateTimeline[i] = oldStateOuter;
-                    stateTimeline[i + 1] = oldStateInner;
-                    i = i + 2;
+                    ets_printf("[%d, %d]", stateTimeline[j], stateTimeline[j + 1]);
                 }
+
+                bool rightTimeline[8] = {0, 1, 1, 1, 1, 0, 0, 0};
+                int counterEquals = 0;
+
+                for (int j = 0; j < 8; j++)
+                {
+                    if (stateTimeline[j] == rightTimeline[j])
+                        counterEquals++;
+                }
+
+                if (counterEquals == 8)
+                {
+                    if (count > 0)
+                        count--;
+                    showRoomState();
+                }
+                endCycle:
+                barrier = 0;
             }
-
-            ets_printf("INNER: Before printing the array (right is 0 1 1 1 1 0 0 0) \n");
-
-            for (int j = 0; j < 8; j = j + 2)
-            {
-                ets_printf("[%d, %d]", stateTimeline[j], stateTimeline[j + 1]);
-            }
-
-            bool rightTimeline[8] = {0, 1, 1, 1, 1, 0, 0, 0};
-            int counterEquals = 0;
-
-            for (int j = 0; j < 8; j++)
-            {
-                if (stateTimeline[j] == rightTimeline[j])
-                    counterEquals++;
-            }
-
-            if (counterEquals == 8)
-            {
-                if (count > 0)
-                    count--;
-                showRoomState();
-            }
-            barrier = 0;
-
             vTaskDelay(10); // Wait 10 ticks
         }
     }
@@ -247,7 +286,6 @@ void app_main(void)
     esp_log_level_set(OUTER, ESP_LOG_INFO);
     esp_log_level_set(INNER, ESP_LOG_INFO);
 
-
     /* HW Setup */
 
     ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
@@ -264,6 +302,8 @@ void app_main(void)
     gpio_install_isr_service(0);
     gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
     gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_NEGEDGE);
+
+    //printLocalTime();
 
     /* Tasks */
 
