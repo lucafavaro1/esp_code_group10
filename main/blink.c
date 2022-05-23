@@ -15,7 +15,7 @@
 #define INNER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_ADC ADC_CHANNEL_6
 #define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2000 is a neg edge
-#define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 3 
+#define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 1 // Last number is in seconds 
 
 static const char *TAG = "BLINK";
 static esp_adc_cal_characteristics_t *adc_chars;
@@ -136,14 +136,14 @@ void IRAM_ATTR decrementTask(void* params) {
                     ets_printf("Decrement MATCH\n");
                     if (count > 0) count--;
                     printToDisplay();
+                    xTaskNotify(
+                        outerBarrierTaskHandle,
+                        3,
+                        eSetBits
+                    );
                 } else {
                     break;
                 }
-                // xTaskNotify(
-                //     outerBarrierTaskHandle,
-                //     3,
-                //     eSetBits
-                // );
                 // Continues to case 3
 
             case 3:
