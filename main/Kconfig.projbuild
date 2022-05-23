@@ -3,14 +3,14 @@ menu "Example Configuration"
     config LIGHT1_GPIO
         int "LIGHT 1 GPIO"
         range 0 34
-        default 18
+        default 33
         help
             TODO
                 
     config LIGHT2_GPIO
         int "LIGHT 2 GPIO"
         range 0 34
-        default 26
+        default 34
         help
             TODO
 
