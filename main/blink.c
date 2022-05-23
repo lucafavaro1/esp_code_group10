@@ -1,97 +1,107 @@
-/* ADC1 Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
 #include <stdio.h>
-#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "driver/adc.h"
-#include "esp_adc_cal.h"
+#include "sdkconfig.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "ssd1306.h"
 
-#define DEFAULT_VREF    1100        //Use adc2_vref_to_gpio() to obtain a better estimate
-#define NO_OF_SAMPLES   64          //Multisampling
+#define INNER_BARRIER_GPIO CONFIG_LIGHT1_GPIO // light 1 -> 33
+#define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 34
+#define INNER_BARRIER_ADC ADC_CHANNEL_5
+#define OUTER_BARRIER_ADC ADC_CHANNEL_6
 
-static esp_adc_cal_characteristics_t *adc_chars;
-static const adc_channel_t channel = ADC_CHANNEL_5;     //GPIO34 if ADC1, GPIO14 if ADC2
-static const adc_channel_t channel2 = ADC_CHANNEL_6;     //GPIO34 if ADC1, GPIO14 if ADC2
-static const adc_atten_t atten = ADC_ATTEN_DB_0;
-static const adc_unit_t unit = ADC_UNIT_1;
+static const char *TAG = "BLINK";
+volatile uint8_t count = 0;
+static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
+static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
-static void check_efuse()
-{
-    //Check TP is burned into eFuse
-    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP) == ESP_OK) {
-        printf("eFuse Two Point: Supported\n");
-    } else {
-        printf("eFuse Two Point: NOT supported\n");
-    }
-
-    //Check Vref is burned into eFuse
-    if (esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_VREF) == ESP_OK) {
-        printf("eFuse Vref: Supported\n");
-    } else {
-        printf("eFuse Vref: NOT supported\n");
-    }
+void initDisplay() {
+    ssd1306_128x32_i2c_init();
+    ssd1306_setFixedFont(ssd1306xled_font6x8);
+    ssd1306_clearScreen();
 }
 
-static void print_char_val_type(esp_adc_cal_value_t val_type)
-{
-    if (val_type == ESP_ADC_CAL_VAL_EFUSE_TP) {
-        printf("Characterized using Two Point Value\n");
-    } else if (val_type == ESP_ADC_CAL_VAL_EFUSE_VREF) {
-        printf("Characterized using eFuse Vref\n");
-    } else {
-        printf("Characterized using Default Vref\n");
-    }
+void IRAM_ATTR printToDisplay(void) {
+    char buffer[15];
+    ssd1306_clearScreen();
+ 	itoa((int) count, buffer, 10); // Convert int to char*
+	ssd1306_printFixedN(96, 0, "G-10", STYLE_NORMAL, 0.5);
+    ssd1306_printFixedN(0, 0, "Count:", STYLE_NORMAL, 1);
+ 	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
 }
 
-void app_main()
-{
-    //Check if Two Point or Vref are burned into eFuse
-    check_efuse();
+void IRAM_ATTR showRoomState(void) {
+    printToDisplay();
+}
 
-    //Configure ADC
-    if (unit == ADC_UNIT_1) {
-        adc1_config_width(ADC_WIDTH_BIT_12);
-        adc1_config_channel_atten(channel, atten);
-    } else {
-        adc2_config_channel_atten((adc2_channel_t)channel, atten);
-    }
-
-    //Characterize ADC
-    adc_chars = calloc(1, sizeof(esp_adc_cal_characteristics_t));
-    esp_adc_cal_value_t val_type = esp_adc_cal_characterize(unit, atten, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
-    print_char_val_type(val_type);
-
-    //Continuously sample ADC1
+void IRAM_ATTR incrementTask(void* params) {
+    // Expect to increment
+    // This means the sequence must follow: outer (1) -> inner (2) -> outer (1) -> outer (2)
     while (1) {
-        uint32_t adc_reading = 0;
-        uint32_t adc_reading2 = 0;
-        //Multisampling
-        for (int i = 0; i < NO_OF_SAMPLES; i++) {
-            if (unit == ADC_UNIT_1) {
-                adc_reading += adc1_get_raw((adc1_channel_t)channel);
-                adc_reading2 += adc1_get_raw((adc1_channel_t)channel2);
-            } else {
-                int raw;
-                adc2_get_raw((adc2_channel_t)channel, ADC_WIDTH_BIT_12, &raw);
-                adc_reading += raw;
-            }
-        }
-        adc_reading /= NO_OF_SAMPLES;
-        adc_reading2 /= NO_OF_SAMPLES;
-        //Convert adc_reading to voltage in mV
-        uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
-        uint32_t voltage2 = esp_adc_cal_raw_to_voltage(adc_reading2, adc_chars);
-        printf("V1: %4dmV\tV2: %4dmV\n", voltage, voltage2);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(100);
+    }
+ }
+
+void IRAM_ATTR decrementTask(void* params) {
+    // Expect to decrement
+    // This means the sequence must follow: inner (2) -> outer (1) -> inner (2) -> outer (1)
+    while (1) {
+        vTaskDelay(100);
     }
 }
 
+void IRAM_ATTR outerBarrierIsr(void) {
+    ets_printf("OUTER %d\n", adc1_get_raw(OUTER_BARRIER_ADC));
+}
 
+void IRAM_ATTR innerBarrierIsr(void) {
+    ets_printf("INNER %d\n", adc1_get_raw(INNER_BARRIER_ADC));
+}
+
+void app_main(void){
+    esp_log_level_set(TAG, ESP_LOG_INFO);
+
+    /* HW Setup */
+
+    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
+    ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
+
+    /* Interrupts */
+
+    gpio_install_isr_service(0);
+ 	gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_ANYEDGE);
+ 	gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
+ 	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_ANYEDGE);
+ 	gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
+
+    /* Tasks */
+
+    xTaskCreatePinnedToCore(
+        incrementTask,
+        "Outer Barrier Task",
+        4096,
+        NULL,
+        1,
+        &outerBarrierTaskHandle,
+        0
+    );
+
+    xTaskCreatePinnedToCore(
+        decrementTask,
+        "Inner Barrier Task",
+        4096,
+        NULL,
+        1,
+        &innerBarrierTaskHandle,
+        1
+    );
+
+    /* Display */
+
+    initDisplay();
+    showRoomState();
+}
