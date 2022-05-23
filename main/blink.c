@@ -14,8 +14,16 @@
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 34
 #define INNER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_ADC ADC_CHANNEL_6
-#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2000 is a neg edge
+#define POSEDGE_THRESHOLD_RAW 0 // Anything above 2000 is a pos edge
+#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge
 #define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 1 // Last number is in seconds 
+
+#define TASK_SLEEP 0
+#define OUTER_IN 1
+#define OUTER_OUT 2
+#define INNER_IN 3
+#define INNER_OUT 4
+#define TASK_RESET 5
 
 static const char *TAG = "BLINK";
 static esp_adc_cal_characteristics_t *adc_chars;
@@ -45,138 +53,162 @@ void IRAM_ATTR showRoomState(void) {
 
 void IRAM_ATTR incrementTask(void* params) {
     // Expect to increment
-    uint64_t wakeTs = 0;
     uint32_t ulNotification = 0;
-    bool outerTriggered = false;
+    bool states[5];
+    for (int i = 0; i < 5; i++) {
+        states[i] = false;
+    }    
 
     while (1) {
-        if (!ulNotification) {
+        if (ulNotification == TASK_SLEEP) {
             xTaskNotifyWait(
                 ULONG_MAX,
                 ULONG_MAX,
                 &ulNotification,
                 portMAX_DELAY
             );
-            ets_printf("Wake %d\n", ulNotification);
         } else {
-            if (esp_timer_get_time() - wakeTs > TASK_TIMEOUT_IN_MICROSECONDS) {
-                // If timeout
-                outerTriggered = false;
-            }
-
             switch (ulNotification)
             {
-            case 1:
-                ets_printf("Increment ACTIVE\n");
-                outerTriggered = true;
-                wakeTs = esp_timer_get_time();
+            case OUTER_IN:
+                states[OUTER_IN] = true;
                 break;
-            
-            case 2:
-                if (outerTriggered) {
-                    ets_printf("Increment MATCH\n");
+
+            case OUTER_OUT:
+                if (states[OUTER_IN] && states[INNER_IN]) {
+                    states[OUTER_OUT] = true;
+                } else {
+                    ulNotification = TASK_RESET;
+                }
+                break;
+
+            case INNER_IN:
+                if (states[OUTER_IN]) {
+                    states[INNER_IN] = true;
+                } else {
+                    ulNotification = TASK_RESET;
+                }
+                break;
+
+            case INNER_OUT:
+                if (states[OUTER_IN] && states[INNER_IN] && states[OUTER_OUT]) {
                     count++;
                     printToDisplay();
-                    xTaskNotify(
-                        innerBarrierTaskHandle,
-                        3,
-                        eSetBits
-                    );
                 } else {
-                    break;
+                    ulNotification = TASK_RESET;
                 }
-                // Continues to case 3
 
-            case 3:
-                // Reset case called by complementary task
-                // or by timeout
-
-                ets_printf("Increment RESET\n");
-                outerTriggered = false;
+            case TASK_RESET:
+                // ets_printf("RESET INCREMENT\n");
+                for (int i = 0; i < 5; i++) {
+                    states[i] = false;
+                }
+                ulNotification = TASK_SLEEP;
                 break;
-
+            
             default:
                 break;
             }
 
-            ulNotification = 0;
+            if (ulNotification != TASK_RESET) {
+                ulNotification = TASK_SLEEP;
+            }
         }
     }
  }
 
 void IRAM_ATTR decrementTask(void* params) {
     // Expect to decrement
-    uint64_t wakeTs = 0;
     uint32_t ulNotification = 0;
-    bool isActive = false;
+    bool states[5];
+    for (int i = 0; i < 5; i++) {
+        states[i] = false;
+    }    
 
     while (1) {
-        if (!ulNotification) {
+        if (ulNotification == TASK_SLEEP) {
             xTaskNotifyWait(
                 ULONG_MAX,
                 ULONG_MAX,
                 &ulNotification,
                 portMAX_DELAY
             );
-        } else {
-            if (esp_timer_get_time() - wakeTs > TASK_TIMEOUT_IN_MICROSECONDS) {
-                // If timeout
-                isActive = false;
-            }
-
-            switch (ulNotification)
+        } else {switch (ulNotification)
             {
-            case 2:
-                ets_printf("Decrement ACTIVE\n");
-                isActive = true;
-                wakeTs = esp_timer_get_time();
+            case INNER_IN:
+                states[INNER_IN] = true;
+                break;
+
+            case INNER_OUT:
+                if (states[INNER_IN] && states[OUTER_IN]) {
+                    states[INNER_OUT] = true;
+                } else {
+                    ulNotification = TASK_RESET;
+                }
+                break;
+
+            case OUTER_IN:
+                if (states[INNER_IN]) {
+                    states[OUTER_IN] = true;
+                } else {
+                    ulNotification = TASK_RESET;
+                }
+                break;
+
+            case OUTER_OUT:
+                if (states[INNER_IN] && states[OUTER_IN] && states[INNER_OUT]) {
+                    if (count > 0) {
+                        count--;
+                        printToDisplay();
+                    }
+                } else {
+                    ulNotification = TASK_RESET;
+                }
+
+            case TASK_RESET:
+                // ets_printf("RESET DECREMENT\n");
+                for (int i = 0; i < 5; i++) {
+                    states[i] = false;
+                }
+                ulNotification = TASK_SLEEP;
                 break;
             
-            case 1:
-                if (isActive) {
-                    ets_printf("Decrement MATCH\n");
-                    if (count > 0) count--;
-                    printToDisplay();
-                    xTaskNotify(
-                        outerBarrierTaskHandle,
-                        3,
-                        eSetBits
-                    );
-                } else {
-                    break;
-                }
-                // Continues to case 3
-
-            case 3:
-                // Reset case called by complementary task
-                // or by timeout
-
-                ets_printf("Decrement RESET\n");
-                isActive = false;
-                break;
-
             default:
                 break;
             }
 
-            ulNotification = 0;
+            if (ulNotification != TASK_RESET) ulNotification = TASK_SLEEP;
         }
     }
 }
 
 void IRAM_ATTR outerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
-    if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("OUTER %d\n", (int) raw);
+    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+        ets_printf("OUTER IN\n");
+        xTaskNotifyFromISR(
+                outerBarrierTaskHandle,
+                OUTER_IN,
+                eSetBits,
+                NULL
+            );
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            OUTER_IN,
+            eSetBits,
+            NULL
+        );
+    } else if (raw > NEGEDGE_THRESHOLD_RAW) {
+        ets_printf("OUTER OUT\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
-            1,
+            OUTER_OUT,
             eSetBits,
             NULL
         );
         xTaskNotifyFromISR(
             innerBarrierTaskHandle,
-            1,
+            OUTER_OUT,
             eSetBits,
             NULL
         );
@@ -185,17 +217,31 @@ void IRAM_ATTR outerBarrierIsr(void) {
 
 void IRAM_ATTR innerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
-    if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("INNER %d\n", (int) raw);
+    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+        ets_printf("INNER IN\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
-            2,
+            INNER_IN,
             eSetBits,
             NULL
         );
         xTaskNotifyFromISR(
             innerBarrierTaskHandle,
-            2,
+            INNER_IN,
+            eSetBits,
+            NULL
+        );
+    } else if (raw > NEGEDGE_THRESHOLD_RAW) {
+        ets_printf("INNER OUT\n");
+        xTaskNotifyFromISR(
+            outerBarrierTaskHandle,
+            INNER_OUT,
+            eSetBits,
+            NULL
+        );
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            INNER_OUT,
             eSetBits,
             NULL
         );
