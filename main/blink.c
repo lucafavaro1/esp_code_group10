@@ -185,7 +185,7 @@ void IRAM_ATTR decrementTask(void* params) {
 void IRAM_ATTR outerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
     if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("OUTER IN\n");
+        // ets_printf("OUTER IN\n");
         xTaskNotifyFromISR(
                 outerBarrierTaskHandle,
                 OUTER_IN,
@@ -199,7 +199,7 @@ void IRAM_ATTR outerBarrierIsr(void) {
             NULL
         );
     } else if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("OUTER OUT\n");
+        // ets_printf("OUTER OUT\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
             OUTER_OUT,
@@ -218,7 +218,7 @@ void IRAM_ATTR outerBarrierIsr(void) {
 void IRAM_ATTR innerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
     if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("INNER IN\n");
+        // ets_printf("INNER IN\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
             INNER_IN,
@@ -232,7 +232,7 @@ void IRAM_ATTR innerBarrierIsr(void) {
             NULL
         );
     } else if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("INNER OUT\n");
+        // ets_printf("INNER OUT\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
             INNER_OUT,
