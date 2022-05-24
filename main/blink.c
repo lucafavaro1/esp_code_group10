@@ -16,7 +16,6 @@
 #define OUTER_BARRIER_ADC ADC_CHANNEL_6
 #define POSEDGE_THRESHOLD_RAW 0 // Anything above 0 is a pos edge (entering movement)
 #define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge (leaving movement)
-#define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 1 // Last number is in seconds 
 
 #define TASK_SLEEP 0
 #define OUTER_IN 1
@@ -184,6 +183,7 @@ void IRAM_ATTR decrementTask(void* params) {
 
 void IRAM_ATTR outerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
+    ets_printf("OUTER %d\n", raw);
     if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
         // ets_printf("OUTER IN\n");
         xTaskNotifyFromISR(
@@ -217,6 +217,7 @@ void IRAM_ATTR outerBarrierIsr(void) {
 
 void IRAM_ATTR innerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
+    ets_printf("INNER %d\n", raw);
     if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
         // ets_printf("INNER IN\n");
         xTaskNotifyFromISR(
