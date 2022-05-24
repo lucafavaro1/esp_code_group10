@@ -14,8 +14,8 @@
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 34
 #define INNER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_ADC ADC_CHANNEL_6
-#define POSEDGE_THRESHOLD_RAW 0 // Anything above 2000 is a pos edge
-#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge
+#define POSEDGE_THRESHOLD_RAW 0 // Anything above 0 is a pos edge (entering movement)
+#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge (leaving movement)
 #define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 1 // Last number is in seconds 
 
 #define TASK_SLEEP 0
@@ -41,9 +41,9 @@ void IRAM_ATTR printToDisplay(void) {
     char buffer[15];
     ssd1306_clearScreen();
     sprintf(buffer, "%02d", count);
-	ssd1306_printFixedN(0, 0, "G10", STYLE_NORMAL, 1);
+    ssd1306_printFixedN(0, 0, "G10", STYLE_NORMAL, 1);
     ssd1306_printFixedN(68, 0, "00:00", STYLE_NORMAL, 1);
- 	ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
+    ssd1306_printFixedN(0, 16, buffer, STYLE_NORMAL, 1);
     ssd1306_printFixedN(104, 16, "00", STYLE_NORMAL, 1);
 }
 
