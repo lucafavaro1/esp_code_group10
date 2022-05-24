@@ -14,8 +14,8 @@
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT2_GPIO // light 2 -> 34
 #define INNER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_ADC ADC_CHANNEL_6
-#define POSEDGE_THRESHOLD_RAW 0 // Anything above 2000 is a pos edge
-#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge
+#define POSEDGE_THRESHOLD_RAW 1 // Anything above 2000 is a pos edge
+#define NEGEDGE_THRESHOLD_RAW 2000 // Anything above 2270 is a neg edge
 #define TASK_TIMEOUT_IN_MICROSECONDS 1000 * 1000 * 1 // Last number is in seconds 
 
 #define TASK_SLEEP 0
@@ -184,7 +184,8 @@ void IRAM_ATTR decrementTask(void* params) {
 
 void IRAM_ATTR outerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
-    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+    // if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+    if (raw < POSEDGE_THRESHOLD_RAW) {
         ets_printf("OUTER IN\n");
         xTaskNotifyFromISR(
                 outerBarrierTaskHandle,
@@ -217,7 +218,8 @@ void IRAM_ATTR outerBarrierIsr(void) {
 
 void IRAM_ATTR innerBarrierIsr(void) {
     uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
-    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+    // if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
+    if (raw < POSEDGE_THRESHOLD_RAW) {
         ets_printf("INNER IN\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
@@ -263,6 +265,9 @@ void app_main(void){
  	gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
  	gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_ANYEDGE);
  	gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
+
+    gpio_pulldown_en(OUTER_BARRIER_GPIO);
+    gpio_pulldown_en(INNER_BARRIER_GPIO);
 
     /* Tasks */
 
