@@ -19,7 +19,6 @@
 
 static esp_adc_cal_characteristics_t *adc_chars;
 static const adc_channel_t channel = ADC_CHANNEL_6;     //GPIO34 if ADC1, GPIO14 if ADC2
-static const adc_channel_t channel2 = ADC_CHANNEL_5;     //GPIO34 if ADC1, GPIO14 if ADC2
 static const adc_atten_t atten = ADC_ATTEN_DB_0;
 static const adc_unit_t unit = ADC_UNIT_1;
 
@@ -60,7 +59,6 @@ void app_main()
     if (unit == ADC_UNIT_1) {
         adc1_config_width(ADC_WIDTH_BIT_12);
         adc1_config_channel_atten(channel, atten);
-        adc1_config_channel_atten(channel2, atten);
     } else {
         adc2_config_channel_atten((adc2_channel_t)channel, atten);
     }
@@ -72,24 +70,8 @@ void app_main()
 
     //Continuously sample ADC1
     while (1) {
-        uint32_t adc_reading = 0;
-        uint32_t adc_reading2 = 0;
-        //Multisampling
-        for (int i = 0; i < NO_OF_SAMPLES; i++) {
-            if (unit == ADC_UNIT_1) {
-                adc_reading += adc1_get_raw((adc1_channel_t)channel);
-                adc_reading2 += adc1_get_raw((adc1_channel_t)channel2);
-            } else {
-                int raw;
-                adc2_get_raw((adc2_channel_t)channel, ADC_WIDTH_BIT_12, &raw);
-                adc_reading += raw;
-            }
-        }
-        adc_reading /= NO_OF_SAMPLES;
         //Convert adc_reading to voltage in mV
-        uint32_t voltage = esp_adc_cal_raw_to_voltage(adc_reading, adc_chars);
-        uint32_t voltage2 = esp_adc_cal_raw_to_voltage(adc_reading2, adc_chars);
-        printf("%dmV\t%dmV\n", voltage, voltage2);
+        printf("Raw: %d\n", adc1_get_raw((adc1_channel_t)channel));
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
