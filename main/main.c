@@ -18,12 +18,15 @@
 #include "mqtt.h"
 #include "main.h"
 
-#define INNER_BARRIER_ADC ADC_CHANNEL_5
-#define OUTER_BARRIER_ADC ADC_CHANNEL_6
+#define OUTER_BARRIER_ADC ADC_CHANNEL_4
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
+
+#define INNER_BARRIER_ADC ADC_CHANNEL_5
 #define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
-#define POSEDGE_THRESHOLD_RAW 0 // Anything above 0 is a pos edge (entering movement)
-#define NEGEDGE_THRESHOLD_RAW 2270 // Anything above 2270 is a neg edge (leaving movement)
+
+#define POSEDGE_THRESHOLD_RAW 0                  // Anything above 0 is a pos edge (entering movement)
+#define NEGEDGE_THRESHOLD_RAW 2270               // Anything above 2270 is a neg edge (leaving movement)
+#define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in milliseconds
 
 #define TASK_SLEEP 0
 #define OUTER_IN 1
@@ -33,8 +36,9 @@
 #define TASK_RESET 5
 
 static const char *TAG = "BLINK";
-static esp_adc_cal_characteristics_t *adc_chars;
 volatile uint8_t count = 0;
+volatile uint64_t lastStableOuterTs = 0;
+volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
 static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
@@ -48,7 +52,7 @@ void initDisplay()
 void showRoomState(void)
 {
     time_t rawtime;
-    struct tm * timeinfo;
+    struct tm *timeinfo;
     char countString[50];
     char timeToPrint[50];
 
@@ -60,20 +64,19 @@ void showRoomState(void)
 
     // convert types in string before printing !! DONT REMOVE, IT CAUSES MEMORY ERROR !!
     sprintf(countString, "%d", count);
-    if(timeinfo->tm_hour < 10)
-        sprintf(timeToPrint, "0%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
-    if(timeinfo->tm_min < 10)
-        sprintf(timeToPrint, "%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
-    if(timeinfo->tm_hour < 10 && timeinfo->tm_min < 10)
-        sprintf(timeToPrint, "0%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
+    if (timeinfo->tm_hour < 10)
+        sprintf(timeToPrint, "/0%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
+    if (timeinfo->tm_min < 10)
+        sprintf(timeToPrint, "%d:/0%d", timeinfo->tm_hour, timeinfo->tm_min);
+    if (timeinfo->tm_hour < 10 && timeinfo->tm_min < 10)
+        sprintf(timeToPrint, "/0%d:/0%d", timeinfo->tm_hour, timeinfo->tm_min);
     else
         sprintf(timeToPrint, "%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
 
-
-    //print on the screen HH:MM
+    // print on the screen HH:MM
     ssd1306_printFixedN(64, 0, timeToPrint, STYLE_NORMAL, 1);
-    ssd1306_printFixedN(0, 16, countString, STYLE_NORMAL, 1);   // counter
-    ssd1306_printFixedN(104, 16, "0", STYLE_NORMAL, 1);          // prediction
+    ssd1306_printFixedN(0, 16, countString, STYLE_NORMAL, 1); // counter
+    ssd1306_printFixedN(104, 16, "0", STYLE_NORMAL, 1);       // prediction
 }
 
 // separate task for updating the display
@@ -96,14 +99,14 @@ void sendData(void)
         char msg[256];
         int qos_test = 1;
         time_t rawtime;
-        struct tm * timeinfo;
-        
+        struct tm *timeinfo;
+
         time(&rawtime);
         timeinfo = localtime(&rawtime);
 
         // check if it's midnight, in that case reset counter if it's not 0
-        if(timeinfo->tm_hour == 0 && timeinfo->tm_min == 0)               
-            if(count > 0)
+        if (timeinfo->tm_hour == 0 && timeinfo->tm_min == 0)
+            if (count > 0)
                 count = 0;
 
         sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, now);
@@ -114,27 +117,32 @@ void sendData(void)
             ESP_LOGE(TAG, "msg_id returned by publish is -1!\n");
         }
 
-        vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms 
+        vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms
     }
 }
 
-void incrementTask(void* params) {
+void incrementTask(void *params)
+{
     // Expect to increment
     uint32_t ulNotification = 0;
     bool states[5];
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++)
+    {
         states[i] = false;
-    }    
+    }
 
-    while (1) {
-        if (ulNotification == TASK_SLEEP) {
+    while (1)
+    {
+        if (ulNotification == TASK_SLEEP)
+        {
             xTaskNotifyWait(
                 ULONG_MAX,
                 ULONG_MAX,
                 &ulNotification,
-                portMAX_DELAY
-            );
-        } else {
+                portMAX_DELAY);
+        }
+        else
+        {
             switch (ulNotification)
             {
             case OUTER_IN:
@@ -142,176 +150,219 @@ void incrementTask(void* params) {
                 break;
 
             case OUTER_OUT:
-                if (states[OUTER_IN] && states[INNER_IN]) {
+                if (states[OUTER_IN] && states[INNER_IN])
+                {
                     states[OUTER_OUT] = true;
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
                 break;
 
             case INNER_IN:
-                if (states[OUTER_IN]) {
+                if (states[OUTER_IN])
+                {
                     states[INNER_IN] = true;
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
                 break;
 
             case INNER_OUT:
-                if (states[OUTER_IN] && states[INNER_IN] && states[OUTER_OUT]) {
+                if (states[OUTER_IN] && states[INNER_IN] && states[OUTER_OUT])
+                {
                     count++;
                     displayTask();
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
 
             case TASK_RESET:
-                // ets_printf("RESET INCREMENT\n");
-                for (int i = 0; i < 5; i++) {
+                ets_printf("RESET INCREMENT\n");
+                for (int i = 0; i < 5; i++)
+                {
                     states[i] = false;
                 }
                 ulNotification = TASK_SLEEP;
                 break;
-            
+
             default:
                 break;
             }
 
-            if (ulNotification != TASK_RESET) {
+            if (ulNotification != TASK_RESET)
+            {
                 ulNotification = TASK_SLEEP;
             }
         }
     }
- }
+}
 
-void decrementTask(void* params) {
+void decrementTask(void *params)
+{
     // Expect to decrement
     uint32_t ulNotification = 0;
     bool states[5];
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++)
+    {
         states[i] = false;
-    }    
+    }
 
-    while (1) {
-        if (ulNotification == TASK_SLEEP) {
+    while (1)
+    {
+        if (ulNotification == TASK_SLEEP)
+        {
             xTaskNotifyWait(
                 ULONG_MAX,
                 ULONG_MAX,
                 &ulNotification,
-                portMAX_DELAY
-            );
-        } else {switch (ulNotification)
+                portMAX_DELAY);
+        }
+        else
+        {
+            switch (ulNotification)
             {
             case INNER_IN:
                 states[INNER_IN] = true;
                 break;
 
             case INNER_OUT:
-                if (states[INNER_IN] && states[OUTER_IN]) {
+                if (states[INNER_IN] && states[OUTER_IN])
+                {
                     states[INNER_OUT] = true;
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
                 break;
 
             case OUTER_IN:
-                if (states[INNER_IN]) {
+                if (states[INNER_IN])
+                {
                     states[OUTER_IN] = true;
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
                 break;
 
             case OUTER_OUT:
-                if (states[INNER_IN] && states[OUTER_IN] && states[INNER_OUT]) {
-                    if (count > 0) {
+                if (states[INNER_IN] && states[OUTER_IN] && states[INNER_OUT])
+                {
+                    if (count > 0)
+                    {
                         count--;
                         displayTask();
                     }
-                } else {
+                }
+                else
+                {
                     ulNotification = TASK_RESET;
                 }
 
             case TASK_RESET:
-                // ets_printf("RESET DECREMENT\n");
-                for (int i = 0; i < 5; i++) {
+                ets_printf("RESET DECREMENT\n");
+                for (int i = 0; i < 5; i++)
+                {
                     states[i] = false;
                 }
                 ulNotification = TASK_SLEEP;
                 break;
-            
+
             default:
                 break;
             }
 
-            if (ulNotification != TASK_RESET) ulNotification = TASK_SLEEP;
+            if (ulNotification != TASK_RESET)
+                ulNotification = TASK_SLEEP;
         }
     }
 }
 
-void IRAM_ATTR outerBarrierIsr(void) {
+void IRAM_ATTR outerBarrierIsr(void)
+{
     uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
-    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("OUTER IN\n");
-        xTaskNotifyFromISR(
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableOuterTs > DEBOUNCE_TIME_IN_MICROSECONDS)
+    {
+        lastStableOuterTs = currentTs;
+        ets_printf("Outer raw: %d \n",raw);
+
+        if (raw >= POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW)
+        {
+            ets_printf("OUTER IN\n");
+            xTaskNotifyFromISR(
                 outerBarrierTaskHandle,
                 OUTER_IN,
                 eSetBits,
-                NULL
-            );
-        xTaskNotifyFromISR(
-            innerBarrierTaskHandle,
-            OUTER_IN,
-            eSetBits,
-            NULL
-        );
-    } else if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("OUTER OUT\n");
-        xTaskNotifyFromISR(
-            outerBarrierTaskHandle,
-            OUTER_OUT,
-            eSetBits,
-            NULL
-        );
-        xTaskNotifyFromISR(
-            innerBarrierTaskHandle,
-            OUTER_OUT,
-            eSetBits,
-            NULL
-        );
+                NULL);
+            xTaskNotifyFromISR(
+                innerBarrierTaskHandle,
+                OUTER_IN,
+                eSetBits,
+                NULL);
+    
+        }
+        else if (raw > NEGEDGE_THRESHOLD_RAW)
+        {
+            ets_printf("OUTER OUT\n");
+            xTaskNotifyFromISR(
+                outerBarrierTaskHandle,
+                OUTER_OUT,
+                eSetBits,
+                NULL);
+            xTaskNotifyFromISR(
+                innerBarrierTaskHandle,
+                OUTER_OUT,
+                eSetBits,
+                NULL);
+        }
     }
 }
 
-void IRAM_ATTR innerBarrierIsr(void) {
+void IRAM_ATTR innerBarrierIsr(void)
+{
     uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
-    if (raw > POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("INNER IN\n");
-        xTaskNotifyFromISR(
-            outerBarrierTaskHandle,
-            INNER_IN,
-            eSetBits,
-            NULL
-        );
-        xTaskNotifyFromISR(
-            innerBarrierTaskHandle,
-            INNER_IN,
-            eSetBits,
-            NULL
-        );
-    } else if (raw > NEGEDGE_THRESHOLD_RAW) {
-        ets_printf("INNER OUT\n");
-        xTaskNotifyFromISR(
-            outerBarrierTaskHandle,
-            INNER_OUT,
-            eSetBits,
-            NULL
-        );
-        xTaskNotifyFromISR(
-            innerBarrierTaskHandle,
-            INNER_OUT,
-            eSetBits,
-            NULL
-        );
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableInnerTs > DEBOUNCE_TIME_IN_MICROSECONDS)
+    {
+        lastStableInnerTs = currentTs;
+        ets_printf("Inner raw: %d \n",raw);
+        if (raw >= POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW)
+        {
+            ets_printf("INNER IN\n");
+            xTaskNotifyFromISR(
+                outerBarrierTaskHandle,
+                INNER_IN,
+                eSetBits,
+                NULL);
+            xTaskNotifyFromISR(
+                innerBarrierTaskHandle,
+                INNER_IN,
+                eSetBits,
+                NULL);
+        }
+        else if (raw > NEGEDGE_THRESHOLD_RAW)
+        {
+            ets_printf("INNER OUT\n");
+            xTaskNotifyFromISR(
+                outerBarrierTaskHandle,
+                INNER_OUT,
+                eSetBits,
+                NULL);
+            xTaskNotifyFromISR(
+                innerBarrierTaskHandle,
+                INNER_OUT,
+                eSetBits,
+                NULL);
+        }
     }
 }
 
@@ -350,12 +401,10 @@ void app_main(void)
     /* Interrupts */
 
     gpio_install_isr_service(0);
-    gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_ANYEDGE); 
+    gpio_set_intr_type(OUTER_BARRIER_GPIO, GPIO_INTR_ANYEDGE);
     gpio_isr_handler_add(OUTER_BARRIER_GPIO, outerBarrierIsr, NULL);
     gpio_set_intr_type(INNER_BARRIER_GPIO, GPIO_INTR_ANYEDGE);
     gpio_isr_handler_add(INNER_BARRIER_GPIO, innerBarrierIsr, NULL);
-
-
 
     /* Tasks */
 
@@ -385,5 +434,4 @@ void app_main(void)
 
     // plus one task to send data every 5 mins to MQTT
     xTaskCreate(sendData, "Send Data Task", 4096, NULL, 3, NULL);
-
 }
