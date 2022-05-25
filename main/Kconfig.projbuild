@@ -3,14 +3,14 @@ menu "Example Configuration"
     config LIGHT1_GPIO
         int "LIGHT 1 GPIO"
         range 0 34
-        default 32
+        default 18
         help
             Choose the GPIO pin number for light barrier 1.
                 
     config LIGHT2_GPIO
         int "LIGHT 2 GPIO"
         range 0 34
-        default 33
+        default 26
         help
             Choose the GPIO pin number for light barrier 2.
             
