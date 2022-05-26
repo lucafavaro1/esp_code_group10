@@ -26,14 +26,16 @@
 
 #define POSEDGE_THRESHOLD_RAW 0                  // Anything above 0 is a pos edge (entering movement)
 #define NEGEDGE_THRESHOLD_RAW 2270               // Anything above 2270 is a neg edge (leaving movement)
-#define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in milliseconds
 
+// state machine states definition
 #define TASK_SLEEP 0
 #define OUTER_IN 1
 #define OUTER_OUT 2
 #define INNER_IN 3
 #define INNER_OUT 4
 #define TASK_RESET 5
+#define OUTER 6
+#define INNER 7
 
 static const char *TAG = "BLINK";
 volatile uint8_t count = 0;
@@ -64,19 +66,19 @@ void showRoomState(void)
 
     // convert types in string before printing !! DONT REMOVE, IT CAUSES MEMORY ERROR !!
     sprintf(countString, "%d", count);
-    if (timeinfo->tm_hour < 10)
-        sprintf(timeToPrint, "/0%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
-    if (timeinfo->tm_min < 10)
-        sprintf(timeToPrint, "%d:/0%d", timeinfo->tm_hour, timeinfo->tm_min);
     if (timeinfo->tm_hour < 10 && timeinfo->tm_min < 10)
-        sprintf(timeToPrint, "/0%d:/0%d", timeinfo->tm_hour, timeinfo->tm_min);
+        sprintf(timeToPrint, "0%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
+    else if (timeinfo->tm_hour < 10)    
+        sprintf(timeToPrint, "0%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
+    else if (timeinfo->tm_min < 10)
+        sprintf(timeToPrint, "%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
     else
         sprintf(timeToPrint, "%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
 
     // print on the screen HH:MM
     ssd1306_printFixedN(64, 0, timeToPrint, STYLE_NORMAL, 1);
-    ssd1306_printFixedN(0, 16, countString, STYLE_NORMAL, 1); // counter
-    ssd1306_printFixedN(104, 16, "0", STYLE_NORMAL, 1);       // prediction
+    ssd1306_printFixedN(16, 16, countString, STYLE_NORMAL, 1); // counter
+    ssd1306_printFixedN(96, 16, "0", STYLE_NORMAL, 1);       // prediction
 }
 
 // separate task for updating the display
@@ -109,7 +111,7 @@ void sendData(void)
             if (count > 0)
                 count = 0;
 
-        sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, now);
+        sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
         ESP_LOGI("MQTT_SEND", "Topic %s: %s\n", TOPIC, msg);
         int msg_id = esp_mqtt_client_publish(mqttClient, TOPIC, msg, strlen(msg), qos_test, 0);
         if (msg_id == -1)
@@ -121,18 +123,21 @@ void sendData(void)
     }
 }
 
+// state machine implementation for the task that should increment the counter
 void incrementTask(void *params)
 {
-    // Expect to increment
+
     uint32_t ulNotification = 0;
     bool states[5];
+    uint32_t raw;
     for (int i = 0; i < 5; i++)
     {
         states[i] = false;
     }
 
     while (1)
-    {
+    {   
+        // after each step further in the state machine, back to sleep
         if (ulNotification == TASK_SLEEP)
         {
             xTaskNotifyWait(
@@ -145,14 +150,52 @@ void incrementTask(void *params)
         {
             switch (ulNotification)
             {
-            case OUTER_IN:
-                states[OUTER_IN] = true;
+
+            // step 0: check if it is a rising or falling edge on the outer barrier
+            case OUTER:
+                vTaskDelay(1);
+                raw = adc1_get_raw(OUTER_BARRIER_ADC);
+                // if it is a falling edge, jump to step 3 
+                if (raw > NEGEDGE_THRESHOLD_RAW)
+                {
+                    ulNotification = OUTER_OUT;
+                }
+                else
+                // if it is a rising edge, jump to step 1 (potentially entering)
+                {
+                    ulNotification = OUTER_IN;
+                }
                 break;
 
-            case OUTER_OUT:
+            // step 0: check if it is a rising or falling edge on the inner barrier
+            case INNER:
+                vTaskDelay(1);
+                raw = adc1_get_raw(INNER_BARRIER_ADC);
+                // if it is a falling edge, jump to step 4 
+                if (raw > NEGEDGE_THRESHOLD_RAW)
+                {
+                    ulNotification = INNER_OUT;
+                }
+                else
+                // if it is a rising edge, jump to step 2
+
+                {
+                    ulNotification = INNER_IN;
+                }
+                break;
+
+            // step 1: break the outer barrier
+            case OUTER_IN:
+                states[OUTER_IN] = true;
+                ulNotification = TASK_SLEEP;
+                break;
+
+            // step 3: release the outer barrier
+            case OUTER_OUT: 
                 if (states[OUTER_IN] && states[INNER_IN])
                 {
                     states[OUTER_OUT] = true;
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -160,10 +203,12 @@ void incrementTask(void *params)
                 }
                 break;
 
+            // step 2: break the inner barrier
             case INNER_IN:
                 if (states[OUTER_IN])
                 {
                     states[INNER_IN] = true;
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -171,11 +216,13 @@ void incrementTask(void *params)
                 }
                 break;
 
+            // step 4: release inner barrier 
             case INNER_OUT:
                 if (states[OUTER_IN] && states[INNER_IN] && states[OUTER_OUT])
                 {
                     count++;
-                    displayTask();
+                    ets_printf("++\n");
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -183,7 +230,7 @@ void incrementTask(void *params)
                 }
 
             case TASK_RESET:
-                ets_printf("RESET INCREMENT\n");
+                //ets_printf("RESET INCREMENT\n");
                 for (int i = 0; i < 5; i++)
                 {
                     states[i] = false;
@@ -194,20 +241,17 @@ void incrementTask(void *params)
             default:
                 break;
             }
-
-            if (ulNotification != TASK_RESET)
-            {
-                ulNotification = TASK_SLEEP;
-            }
         }
     }
 }
 
+// state machine implementation for the task that should increment the counter
 void decrementTask(void *params)
 {
-    // Expect to decrement
+
     uint32_t ulNotification = 0;
     bool states[5];
+    uint32_t raw;
     for (int i = 0; i < 5; i++)
     {
         states[i] = false;
@@ -215,6 +259,7 @@ void decrementTask(void *params)
 
     while (1)
     {
+        // after each step further in the state machine, back to sleep
         if (ulNotification == TASK_SLEEP)
         {
             xTaskNotifyWait(
@@ -227,14 +272,52 @@ void decrementTask(void *params)
         {
             switch (ulNotification)
             {
-            case INNER_IN:
-                states[INNER_IN] = true;
+            // step 0: check if it is a rising or falling edge on the outer barrier
+            case OUTER:
+                vTaskDelay(1);
+                raw = adc1_get_raw(OUTER_BARRIER_ADC);
+                ets_printf("Outer raw: %d \n", raw);
+                // if it is a falling edge, jump to step 4
+                if (raw > NEGEDGE_THRESHOLD_RAW)
+                {
+                    ulNotification = OUTER_OUT;
+                }
+                else
+                // if it is a rising edge, jump to step 2
+                {
+                    ulNotification = OUTER_IN;
+                }
                 break;
 
+            // step 0: check if it is a rising or falling edge on the inner barrier
+            case INNER:
+                vTaskDelay(1);
+                raw = adc1_get_raw(INNER_BARRIER_ADC);
+                ets_printf("Inner raw: %d \n", raw);
+                // if it is a falling edge, jump to step 3
+                if (raw > NEGEDGE_THRESHOLD_RAW)
+                {
+                    ulNotification = INNER_OUT;
+                }
+                else
+                // if it is a rising edge, jump to step 1 
+                {
+                    ulNotification = INNER_IN;
+                }
+                break;
+
+            // step 1: break the inner barrier
+            case INNER_IN:
+                states[INNER_IN] = true;
+                ulNotification = TASK_SLEEP;
+                break;
+
+            // step 3: release inner barrier
             case INNER_OUT:
                 if (states[INNER_IN] && states[OUTER_IN])
                 {
                     states[INNER_OUT] = true;
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -242,10 +325,12 @@ void decrementTask(void *params)
                 }
                 break;
 
+            // step 2: break the outer barrier
             case OUTER_IN:
                 if (states[INNER_IN])
                 {
                     states[OUTER_IN] = true;
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -253,14 +338,16 @@ void decrementTask(void *params)
                 }
                 break;
 
+            // step 4: release outer barrier
             case OUTER_OUT:
                 if (states[INNER_IN] && states[OUTER_IN] && states[INNER_OUT])
                 {
                     if (count > 0)
                     {
                         count--;
-                        displayTask();
                     }
+                    ets_printf("--\n");
+                    ulNotification = TASK_SLEEP;
                 }
                 else
                 {
@@ -268,7 +355,7 @@ void decrementTask(void *params)
                 }
 
             case TASK_RESET:
-                ets_printf("RESET DECREMENT\n");
+                //ets_printf("RESET DECREMENT\n");
                 for (int i = 0; i < 5; i++)
                 {
                     states[i] = false;
@@ -279,91 +366,39 @@ void decrementTask(void *params)
             default:
                 break;
             }
-
-            if (ulNotification != TASK_RESET)
-                ulNotification = TASK_SLEEP;
         }
     }
 }
 
+// interrupt function, each time that the outer barrier is broken both tasks are resumed
 void IRAM_ATTR outerBarrierIsr(void)
 {
-    uint32_t raw = adc1_get_raw(OUTER_BARRIER_ADC);
-    uint64_t currentTs = esp_timer_get_time();
-    if (currentTs - lastStableOuterTs > DEBOUNCE_TIME_IN_MICROSECONDS)
-    {
-        lastStableOuterTs = currentTs;
-        ets_printf("Outer raw: %d \n",raw);
-
-        if (raw >= POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW)
-        {
-            ets_printf("OUTER IN\n");
-            xTaskNotifyFromISR(
-                outerBarrierTaskHandle,
-                OUTER_IN,
-                eSetBits,
-                NULL);
-            xTaskNotifyFromISR(
-                innerBarrierTaskHandle,
-                OUTER_IN,
-                eSetBits,
-                NULL);
+        xTaskNotifyFromISR(
+            outerBarrierTaskHandle,
+            OUTER,
+            eSetBits,
+            NULL);
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            OUTER,
+            eSetBits,
+            NULL);
     
-        }
-        else if (raw > NEGEDGE_THRESHOLD_RAW)
-        {
-            ets_printf("OUTER OUT\n");
-            xTaskNotifyFromISR(
-                outerBarrierTaskHandle,
-                OUTER_OUT,
-                eSetBits,
-                NULL);
-            xTaskNotifyFromISR(
-                innerBarrierTaskHandle,
-                OUTER_OUT,
-                eSetBits,
-                NULL);
-        }
-    }
 }
 
+// interrupt function, each time that the inner barrier is broken both tasks are resumed
 void IRAM_ATTR innerBarrierIsr(void)
 {
-    uint32_t raw = adc1_get_raw(INNER_BARRIER_ADC);
-    uint64_t currentTs = esp_timer_get_time();
-    if (currentTs - lastStableInnerTs > DEBOUNCE_TIME_IN_MICROSECONDS)
-    {
-        lastStableInnerTs = currentTs;
-        ets_printf("Inner raw: %d \n",raw);
-        if (raw >= POSEDGE_THRESHOLD_RAW && raw <= NEGEDGE_THRESHOLD_RAW)
-        {
-            ets_printf("INNER IN\n");
-            xTaskNotifyFromISR(
-                outerBarrierTaskHandle,
-                INNER_IN,
-                eSetBits,
-                NULL);
-            xTaskNotifyFromISR(
-                innerBarrierTaskHandle,
-                INNER_IN,
-                eSetBits,
-                NULL);
-        }
-        else if (raw > NEGEDGE_THRESHOLD_RAW)
-        {
-            ets_printf("INNER OUT\n");
-            xTaskNotifyFromISR(
-                outerBarrierTaskHandle,
-                INNER_OUT,
-                eSetBits,
-                NULL);
-            xTaskNotifyFromISR(
-                innerBarrierTaskHandle,
-                INNER_OUT,
-                eSetBits,
-                NULL);
-        }
-    }
+        xTaskNotifyFromISR(
+            outerBarrierTaskHandle,
+            INNER,
+            eSetBits,
+            NULL);
+        xTaskNotifyFromISR(
+            innerBarrierTaskHandle,
+            INNER,
+            eSetBits,
+            NULL);
 }
 
 void app_main(void)
@@ -381,6 +416,8 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    /* Wifi - Time sync - IoT platform Setup */
 
     initWifi();
     initSNTP();

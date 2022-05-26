@@ -11,8 +11,6 @@
     #define WIFI_SSID "CAPS-Seminar-Room"
     #define WIFI_PASS "caps-schulz-seminar-room-wifi"
     #define SNTP_SERVER "ntp1.in.tum.de"
-    //#define WIFI_SSID "LUCA_EXT"
-    //#define WIFI_PASS "VR-Bank2021!"
     //#define SNTP_SERVER "pool.ntp.org"
 #endif
 
