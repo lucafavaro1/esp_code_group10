@@ -107,7 +107,7 @@ void sendData(void)
         timeinfo = localtime(&rawtime);
 
         // check if it's midnight, in that case reset counter if it's not 0
-        if (timeinfo->tm_hour == 0 && timeinfo->tm_min == 0)
+        if (timeinfo->tm_hour == 0 && (timeinfo->tm_min >= 0 || timeinfo->tm_min < 5))
             if (count > 0)
                 count = 0;
 
