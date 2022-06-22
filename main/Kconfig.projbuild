@@ -10,7 +10,7 @@ menu "Example Configuration"
     config LIGHT2_GPIO
         int "LIGHT 2 GPIO"
         range 0 34
-        default 26
+        default 19
         help
             Choose the GPIO pin number for light barrier 2.
             

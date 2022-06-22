@@ -18,14 +18,15 @@
 #include "mqtt.h"
 #include "main.h"
 
-#define OUTER_BARRIER_ADC ADC_CHANNEL_4
+#define OUTER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
 
-#define INNER_BARRIER_ADC ADC_CHANNEL_5
+#define INNER_BARRIER_ADC ADC_CHANNEL_6
 #define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
 
 #define POSEDGE_THRESHOLD_RAW 0                  // Anything above 0 is a pos edge (entering movement)
 #define NEGEDGE_THRESHOLD_RAW 2270               // Anything above 2270 is a neg edge (leaving movement)
+#define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in miliseconds
 
 // state machine states definition
 #define TASK_SLEEP 0
@@ -38,7 +39,8 @@
 #define INNER 7
 
 static const char *TAG = "BLINK";
-volatile uint8_t count = 0;
+volatile uint8_t __attribute__ ((section(".noinit"))) count;
+volatile uint8_t __attribute__ ((section(".noinit"))) firstTime;
 volatile uint64_t lastStableOuterTs = 0;
 volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
@@ -46,7 +48,7 @@ static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
 void initDisplay()
 {
-    ssd1306_128x32_i2c_init();
+    ssd1306_128x64_i2c_init();
     ssd1306_setFixedFont(ssd1306xled_font6x8);
     ssd1306_clearScreen();
 }
@@ -68,7 +70,7 @@ void showRoomState(void)
     sprintf(countString, "%d", count);
     if (timeinfo->tm_hour < 10 && timeinfo->tm_min < 10)
         sprintf(timeToPrint, "0%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
-    else if (timeinfo->tm_hour < 10)    
+    else if (timeinfo->tm_hour < 10)
         sprintf(timeToPrint, "0%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
     else if (timeinfo->tm_min < 10)
         sprintf(timeToPrint, "%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
@@ -77,8 +79,8 @@ void showRoomState(void)
 
     // print on the screen HH:MM
     ssd1306_printFixedN(64, 0, timeToPrint, STYLE_NORMAL, 1);
-    ssd1306_printFixedN(16, 16, countString, STYLE_NORMAL, 1); // counter
-    ssd1306_printFixedN(96, 16, "0", STYLE_NORMAL, 1);       // prediction
+    ssd1306_printFixedN(0, 32, countString, STYLE_NORMAL, 2); // counter
+    ssd1306_printFixedN(96, 32, "0", STYLE_NORMAL, 2);         // prediction
 }
 
 // separate task for updating the display
@@ -87,7 +89,7 @@ void displayTask(void)
     while (1)
     {
         showRoomState();
-        vTaskDelay(100);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -136,7 +138,7 @@ void incrementTask(void *params)
     }
 
     while (1)
-    {   
+    {
         // after each step further in the state machine, back to sleep
         if (ulNotification == TASK_SLEEP)
         {
@@ -155,7 +157,8 @@ void incrementTask(void *params)
             case OUTER:
                 vTaskDelay(1);
                 raw = adc1_get_raw(OUTER_BARRIER_ADC);
-                // if it is a falling edge, jump to step 3 
+                ets_printf("Outer raw: %d \n", raw);
+                // if it is a falling edge, jump to step 3
                 if (raw > NEGEDGE_THRESHOLD_RAW)
                 {
                     ulNotification = OUTER_OUT;
@@ -171,7 +174,8 @@ void incrementTask(void *params)
             case INNER:
                 vTaskDelay(1);
                 raw = adc1_get_raw(INNER_BARRIER_ADC);
-                // if it is a falling edge, jump to step 4 
+                ets_printf("Inner raw: %d \n", raw);
+                // if it is a falling edge, jump to step 4
                 if (raw > NEGEDGE_THRESHOLD_RAW)
                 {
                     ulNotification = INNER_OUT;
@@ -191,7 +195,7 @@ void incrementTask(void *params)
                 break;
 
             // step 3: release the outer barrier
-            case OUTER_OUT: 
+            case OUTER_OUT:
                 if (states[OUTER_IN] && states[INNER_IN])
                 {
                     states[OUTER_OUT] = true;
@@ -216,7 +220,7 @@ void incrementTask(void *params)
                 }
                 break;
 
-            // step 4: release inner barrier 
+            // step 4: release inner barrier
             case INNER_OUT:
                 if (states[OUTER_IN] && states[INNER_IN] && states[OUTER_OUT])
                 {
@@ -230,7 +234,7 @@ void incrementTask(void *params)
                 }
 
             case TASK_RESET:
-                //ets_printf("RESET INCREMENT\n");
+                // ets_printf("RESET INCREMENT\n");
                 for (int i = 0; i < 5; i++)
                 {
                     states[i] = false;
@@ -270,6 +274,7 @@ void decrementTask(void *params)
         }
         else
         {
+            // ets_printf("DECREMENT TASK UL: %d\n", ulNotification);
             switch (ulNotification)
             {
             // step 0: check if it is a rising or falling edge on the outer barrier
@@ -300,7 +305,7 @@ void decrementTask(void *params)
                     ulNotification = INNER_OUT;
                 }
                 else
-                // if it is a rising edge, jump to step 1 
+                // if it is a rising edge, jump to step 1
                 {
                     ulNotification = INNER_IN;
                 }
@@ -345,8 +350,8 @@ void decrementTask(void *params)
                     if (count > 0)
                     {
                         count--;
+                        ets_printf("--\n");
                     }
-                    ets_printf("--\n");
                     ulNotification = TASK_SLEEP;
                 }
                 else
@@ -355,7 +360,7 @@ void decrementTask(void *params)
                 }
 
             case TASK_RESET:
-                //ets_printf("RESET DECREMENT\n");
+                // ets_printf("RESET DECREMENT\n");
                 for (int i = 0; i < 5; i++)
                 {
                     states[i] = false;
@@ -373,6 +378,10 @@ void decrementTask(void *params)
 // interrupt function, each time that the outer barrier is broken both tasks are resumed
 void IRAM_ATTR outerBarrierIsr(void)
 {
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableOuterTs > DEBOUNCE_TIME_IN_MICROSECONDS)
+    {
+        // ets_printf("COVERED OUTER\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
             OUTER,
@@ -383,12 +392,17 @@ void IRAM_ATTR outerBarrierIsr(void)
             OUTER,
             eSetBits,
             NULL);
-    
+    lastStableOuterTs = currentTs;
+    }
 }
 
 // interrupt function, each time that the inner barrier is broken both tasks are resumed
 void IRAM_ATTR innerBarrierIsr(void)
 {
+    uint64_t currentTs = esp_timer_get_time();
+    if (currentTs - lastStableInnerTs > DEBOUNCE_TIME_IN_MICROSECONDS)
+    {
+        // ets_printf("COVERED INNER\n");
         xTaskNotifyFromISR(
             outerBarrierTaskHandle,
             INNER,
@@ -399,6 +413,8 @@ void IRAM_ATTR innerBarrierIsr(void)
             INNER,
             eSetBits,
             NULL);
+    lastStableInnerTs = currentTs;
+    }
 }
 
 void app_main(void)
@@ -419,6 +435,12 @@ void app_main(void)
 
     /* Wifi - Time sync - IoT platform Setup */
 
+    if(firstTime != 42) {
+        count = 0;
+        firstTime = 42;
+    }
+
+
     initWifi();
     initSNTP();
     initMQTT();
@@ -429,11 +451,11 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_set_direction(INNER_BARRIER_GPIO, GPIO_MODE_INPUT));
 
     // pullup and pulldown are not working with our hardware :)
-    gpio_pullup_en(OUTER_BARRIER_GPIO);
-    gpio_pullup_en(INNER_BARRIER_GPIO);
+    // gpio_pullup_dis(OUTER_BARRIER_GPIO);
+    // gpio_pullup_dis(INNER_BARRIER_GPIO);
 
-    gpio_pulldown_dis(INNER_BARRIER_GPIO);
-    gpio_pulldown_dis(OUTER_BARRIER_GPIO);
+    // gpio_pulldown_en(INNER_BARRIER_GPIO);
+    // gpio_pulldown_en(OUTER_BARRIER_GPIO);
 
     /* Interrupts */
 
