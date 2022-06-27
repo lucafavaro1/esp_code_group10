@@ -8,15 +8,18 @@
 #include <driver/adc.h>
 #include "sdkconfig.h"
 #include "esp_adc_cal.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_event_loop.h"
 #include "ssd1306.h"
 #include "nvs_flash.h"
 #include "wifi.h"
 #include "timeMgmt.h"
 #include "mqtt.h"
 #include "main.h"
+#include "cJSON.h"
 
 #define OUTER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
@@ -41,6 +44,8 @@
 static const char *TAG = "BLINK";
 volatile uint8_t __attribute__ ((section(".noinit"))) count;
 volatile uint8_t __attribute__ ((section(".noinit"))) firstTime;
+volatile uint8_t prediction = 0;
+volatile uint8_t prediction_ts = 0;
 volatile uint64_t lastStableOuterTs = 0;
 volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
@@ -93,15 +98,111 @@ void displayTask(void)
     }
 }
 
+esp_err_t _http_event_handler(esp_http_client_event_t *evt)
+{
+    static char *output_buffer;  // Buffer to store response of http request from event handler
+    static int output_len;       // Stores number of bytes read
+    switch (evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+            break;
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            break;
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+            /*
+             *  Check for chunked encoding is added as the URL for chunked encoding used in this example returns binary data.
+             *  However, event handler can also be used in case chunked encoding is used.
+             */
+            if (!esp_http_client_is_chunked_response(evt->client)) {
+                // If user_data buffer is configured, copy the response into the buffer
+                if (evt->user_data) {
+                    memcpy(evt->user_data + output_len, evt->data, evt->data_len);
+                } else {
+                    if (output_buffer == NULL) {
+                        output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
+                        output_len = 0;
+                        if (output_buffer == NULL) {
+                            ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
+                            return ESP_FAIL;
+                        }
+                    }
+                    memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                }
+                output_len += evt->data_len;
+            }
+
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+            if (output_buffer != NULL) {
+                // Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
+                // ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
+                free(output_buffer);
+                output_buffer = NULL;
+            }
+            output_len = 0;
+            break;
+        case HTTP_EVENT_DISCONNECTED:
+            break;
+    }
+    return ESP_OK;
+}
+
+void getPrediction()
+{
+    char buffer[255] = {0};
+    char *out;
+    esp_http_client_config_t config = {
+            .host = "34.159.167.5",
+            .path = "/predict",
+            .auth_type = HTTP_AUTH_TYPE_NONE,
+            .user_data = &buffer,
+            .event_handler = _http_event_handler
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200) {
+        int size = esp_http_client_get_content_length(client);
+        cJSON *root = cJSON_Parse(buffer);
+        if (root) {
+            prediction = cJSON_GetObjectItem(root, "prediction")->valueint;
+            cJSON_Delete(root);
+        }
+    } else {
+        ets_printf("HTTP GET request failed: %s", esp_err_to_name(err));
+    }
+}
+
+void sendToMqtt(char* username, char* sensorName, int count, int deviceId, unsigned long rawtime)
+{
+    char msg[256];
+    int qos_test = 1;
+    sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
+    ESP_LOGI("MQTT_SEND", "Topic %s: %s\n", TOPIC, msg);
+    int msg_id = esp_mqtt_client_publish(mqttClient, TOPIC, msg, strlen(msg), qos_test, 0);
+    if (msg_id == -1)
+    {
+        ESP_LOGE(TAG, "msg_id returned by publish is -1!\n");
+    }
+}
+
 // separate task to send the "count" value to the MQTT platform every 5 mins
-void sendData(void)
+void retrieveAndSend(void)
 {
     time_t now = 0;
 
     while (1)
     {
         char msg[256];
-        int qos_test = 1;
         time_t rawtime;
         struct tm *timeinfo;
 
@@ -113,13 +214,13 @@ void sendData(void)
             if (count > 0)
                 count = 0;
 
-        sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
-        ESP_LOGI("MQTT_SEND", "Topic %s: %s\n", TOPIC, msg);
-        int msg_id = esp_mqtt_client_publish(mqttClient, TOPIC, msg, strlen(msg), qos_test, 0);
-        if (msg_id == -1)
-        {
-            ESP_LOGE(TAG, "msg_id returned by publish is -1!\n");
-        }
+        getPrediction();
+
+        // send the sensor value to the mqtt platform
+        sendToMqtt(USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
+
+        // send the prediction value to the mqtt platform
+        sendToMqtt(USER_NAME, SENSOR_PREDICTION, prediction, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
 
         vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms
     }
@@ -492,5 +593,5 @@ void app_main(void)
     xTaskCreate(displayTask, "Display Task", 4096, NULL, 2, NULL);
 
     // plus one task to send data every 5 mins to MQTT
-    xTaskCreate(sendData, "Send Data Task", 4096, NULL, 3, NULL);
+    xTaskCreate(retrieveAndSend, "Send Data Task", 4096, NULL, 3, NULL);
 }
