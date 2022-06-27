@@ -188,7 +188,7 @@ void sendToMqtt(char* username, char* sensorName, int count, int deviceId, unsig
 {
     char msg[256];
     int qos_test = 1;
-    sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
+    sprintf(msg, "{\"username\":\"%s\",\"%s\":%d,\"device_id\":\"%d\",\"timestamp\":%lu000}", username, sensorName, count, deviceId, rawtime);
     ESP_LOGI("MQTT_SEND", "Topic %s: %s\n", TOPIC, msg);
     int msg_id = esp_mqtt_client_publish(mqttClient, TOPIC, msg, strlen(msg), qos_test, 0);
     if (msg_id == -1)
