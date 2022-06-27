@@ -64,6 +64,7 @@ void showRoomState(void)
     struct tm *timeinfo;
     char countString[50];
     char timeToPrint[50];
+    char predictionString[50];
 
     ssd1306_clearScreen();
     ssd1306_printFixedN(0, 0, "G10", STYLE_NORMAL, 1);
@@ -73,6 +74,7 @@ void showRoomState(void)
 
     // convert types in string before printing !! DONT REMOVE, IT CAUSES MEMORY ERROR !!
     sprintf(countString, "%d", count);
+    sprintf(predictionString, "%d", prediction);
     if (timeinfo->tm_hour < 10 && timeinfo->tm_min < 10)
         sprintf(timeToPrint, "0%d:0%d", timeinfo->tm_hour, timeinfo->tm_min);
     else if (timeinfo->tm_hour < 10)
@@ -85,7 +87,7 @@ void showRoomState(void)
     // print on the screen HH:MM
     ssd1306_printFixedN(64, 0, timeToPrint, STYLE_NORMAL, 1);
     ssd1306_printFixedN(0, 32, countString, STYLE_NORMAL, 2); // counter
-    ssd1306_printFixedN(96, 32, "0", STYLE_NORMAL, 2);         // prediction
+    ssd1306_printFixedN(96, 32, predictionString, STYLE_NORMAL, 2);         // prediction
 }
 
 // separate task for updating the display
