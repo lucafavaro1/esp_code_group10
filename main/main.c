@@ -41,6 +41,8 @@
 #define OUTER 6
 #define INNER 7
 
+#define VM_HOST_URL "34.159.167.5"
+
 static const char *TAG = "BLINK";
 volatile uint8_t __attribute__ ((section(".noinit"))) count;
 volatile uint8_t __attribute__ ((section(".noinit"))) firstTime;
@@ -50,6 +52,8 @@ volatile uint64_t lastStableOuterTs = 0;
 volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
 static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
+
+
 
 void initDisplay()
 {
@@ -155,10 +159,12 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 void getPrediction()
 {
     char buffer[255] = {0};
+    char url[50];
     char *out;
+    sprintf(url, "/predict/%d", count);
     esp_http_client_config_t config = {
-            .host = "34.159.167.5",
-            .path = "/predict",
+            .host = VM_HOST_URL,
+            .path = url,
             .auth_type = HTTP_AUTH_TYPE_NONE,
             .user_data = &buffer,
             .event_handler = _http_event_handler
