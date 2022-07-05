@@ -251,6 +251,7 @@ void retrieveAndSend(void)
 
         // send the prediction value to the mqtt platform
         sendToMqtt(USER_NAME, SENSOR_PREDICTION, prediction, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
+        
         sendToMqtt(USER_NAME, SENSOR_PREDICTION_LR, predictionLr, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
 
         vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms
