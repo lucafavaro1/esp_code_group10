@@ -21,6 +21,10 @@
 #include "main.h"
 #include "cJSON.h"
 
+#include "esp_pm.h"
+#include "esp_sleep.h"
+
+
 #define OUTER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
 
@@ -54,6 +58,50 @@ volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
 static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
 
+// TO TEST CPU FREQUENCY
+//menuconfig -> component config -> ESP32 specific -> CPU frequency (standard 160) for 80/160/240
+
+// TEST LIGHT SLEEP MODE (.light_sleep_enable = true in the code below)
+// to test with different min tick to enter in sleep mode (currently 10)
+
+// TO TEST DFS (Dynamic Frequency Scaling) WITH MAX: 80/160/240
+void configPM(){
+    esp_pm_config_esp32_t pm_config = {
+        .max_freq_mhz = 80,
+        .min_freq_mhz = 10, //DFS, enable in menuconfig in Power Management
+        .light_sleep_enable = false  //automatic light sleep, enable via menuconfig in FreeRTOS
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+}
+
+// TO TEST WIFI: 
+// go in wifi.c and uncomment the lines .listen_interval and esp_wifi_set_ps(...)
+// test with different interval values
+
+
+// TO TEST WITH DISPLAY OFF:
+// use the following command to switch it off
+// ssd1306_command(SSD1306_DISPLAYOFF);
+// and to wake it back
+// ssd1306_command(SSD1306_DISPLAYON);
+
+
+// TO TEST LIGHT SLEEP WITH TIMER
+void testLightSleep() {
+    int light_sleep_sec = 30;
+    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(1000000LL * light_sleep_sec));
+    ESP_LOGI(TAG,"Starting light sleep");
+    esp_light_sleep_start();
+    ESP_LOGI(TAG,"Woke up from light sleep");
+}
+
+// TO TEST DEEP SLEEP WITH TIMER
+void testDeepSleep() {
+    int deep_sleep_sec = 30;
+    ESP_LOGI(TAG,"Starting deep sleep");
+    esp_deep_sleep(1000000LL * deep_sleep_sec);
+    ESP_LOGI(TAG,"Woke up from deep sleep");
+}
 
 
 void initDisplay()
@@ -79,7 +127,7 @@ void showRoomState(void)
 
     // convert types in string before printing !! DONT REMOVE, IT CAUSES MEMORY ERROR !!
     sprintf(countString, "%02d", count);
-    sprintf(predictionString, "%02d", prediction);
+    sprintf(predictionString, "%02d", predictionLr);
 
     sprintf(timeToPrint, "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
 
@@ -573,7 +621,7 @@ void app_main(void)
         firstTime = 42;
     }
 
-
+    //configPM();
     initWifi();
     initSNTP();
     initMQTT();
@@ -582,13 +630,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(gpio_set_direction(OUTER_BARRIER_GPIO, GPIO_MODE_INPUT));
     ESP_ERROR_CHECK(gpio_set_direction(INNER_BARRIER_GPIO, GPIO_MODE_INPUT));
-
-    // pullup and pulldown are not working with our hardware :)
-    // gpio_pullup_dis(OUTER_BARRIER_GPIO);
-    // gpio_pullup_dis(INNER_BARRIER_GPIO);
-
-    // gpio_pulldown_en(INNER_BARRIER_GPIO);
-    // gpio_pulldown_en(OUTER_BARRIER_GPIO);
 
     /* Interrupts */
 
@@ -626,4 +667,7 @@ void app_main(void)
 
     // plus one task to send data every 5 mins to MQTT
     xTaskCreate(retrieveAndSend, "Send Data Task", 4096, NULL, 3, NULL);
+
+    //testLightSleep();
+    //testDeepSleep();
 }
