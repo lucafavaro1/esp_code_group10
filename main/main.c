@@ -21,10 +21,6 @@
 #include "main.h"
 #include "cJSON.h"
 
-#include "esp_pm.h"
-#include "esp_sleep.h"
-
-
 #define OUTER_BARRIER_ADC ADC_CHANNEL_5
 #define OUTER_BARRIER_GPIO CONFIG_LIGHT1_GPIO
 
@@ -36,7 +32,7 @@
 #define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in miliseconds
 
 // state machine states definition
-#define TASK_SLEEP 0
+#define TASK_WAIT 0
 #define OUTER_IN 1
 #define OUTER_OUT 2
 #define INNER_IN 3
@@ -50,57 +46,12 @@
 static const char *TAG = "BLINK";
 volatile uint8_t __attribute__ ((section(".noinit"))) count;
 volatile uint8_t __attribute__ ((section(".noinit"))) firstTime;
+volatile uint8_t prediction = 0;
 volatile uint8_t predictionLr = 0;
 volatile uint64_t lastStableOuterTs = 0;
 volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
 static IRAM_ATTR TaskHandle_t innerBarrierTaskHandle;
-
-// TO TEST CPU FREQUENCY
-//menuconfig -> component config -> ESP32 specific -> CPU frequency (standard 160) for 80/160/240
-
-// TEST LIGHT SLEEP MODE (.light_sleep_enable = true in the code below)
-// to test with different min tick to enter in sleep mode (currently 10)
-
-// TO TEST DFS (Dynamic Frequency Scaling) WITH MAX: 80/160/240
-void configPM(){
-    esp_pm_config_esp32_t pm_config = {
-        .max_freq_mhz = 80,
-        .min_freq_mhz = 10, //DFS, enable in menuconfig in Power Management
-        .light_sleep_enable = false  //automatic light sleep, enable via menuconfig in FreeRTOS
-    };
-    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
-}
-
-// TO TEST WIFI: 
-// go in wifi.c and uncomment the lines .listen_interval and esp_wifi_set_ps(...)
-// test with different interval values
-
-
-// TO TEST WITH DISPLAY OFF:
-// use the following command to switch it off
-// ssd1306_command(SSD1306_DISPLAYOFF);
-// and to wake it back
-// ssd1306_command(SSD1306_DISPLAYON);
-
-
-// TO TEST LIGHT SLEEP WITH TIMER
-void testLightSleep() {
-    int light_sleep_sec = 30;
-    ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(1000000LL * light_sleep_sec));
-    ESP_LOGI(TAG,"Starting light sleep");
-    esp_light_sleep_start();
-    ESP_LOGI(TAG,"Woke up from light sleep");
-}
-
-// TO TEST DEEP SLEEP WITH TIMER
-void testDeepSleep() {
-    int deep_sleep_sec = 30;
-    ESP_LOGI(TAG,"Starting deep sleep");
-    esp_deep_sleep(1000000LL * deep_sleep_sec);
-    ESP_LOGI(TAG,"Woke up from deep sleep");
-}
-
 
 void initDisplay()
 {
@@ -203,6 +154,32 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
+void getPrediction()
+{
+    char buffer[255] = {0};
+    char *out;
+    esp_http_client_config_t config = {
+            .host = VM_HOST_URL,
+            .path = "/predict",
+            .auth_type = HTTP_AUTH_TYPE_NONE,
+            .user_data = &buffer,
+            .event_handler = _http_event_handler
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200) {
+        int size = esp_http_client_get_content_length(client);
+        cJSON *root = cJSON_Parse(buffer);
+        if (root) {
+            prediction = cJSON_GetObjectItem(root, "prediction")->valueint;
+            cJSON_Delete(root);
+        }
+    } else {
+        ets_printf("HTTP GET request failed: %s", esp_err_to_name(err));
+    }
+}
+
 void getPredictionLr() 
 {
     char buffer[255] = {0};
@@ -263,10 +240,12 @@ void retrieveAndSend(void)
             if (count > 0)
                 count = 0;
 
+        getPrediction();
         getPredictionLr();
 
         // send the sensor value to the mqtt platform
         sendToMqtt(USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
+        sendToMqtt(USER_NAME, SENSOR_PREDICTION, prediction, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
         sendToMqtt(USER_NAME, SENSOR_PREDICTION_LR, predictionLr, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
 
         vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms
@@ -288,7 +267,7 @@ void incrementTask(void *params)
     while (1)
     {
         // after each step further in the state machine, back to sleep
-        if (ulNotification == TASK_SLEEP)
+        if (ulNotification == TASK_WAIT)
         {
             xTaskNotifyWait(
                 ULONG_MAX,
@@ -339,7 +318,7 @@ void incrementTask(void *params)
             // step 1: break the outer barrier
             case OUTER_IN:
                 states[OUTER_IN] = true;
-                ulNotification = TASK_SLEEP;
+                ulNotification = TASK_WAIT;
                 break;
 
             // step 3: release the outer barrier
@@ -347,7 +326,7 @@ void incrementTask(void *params)
                 if (states[OUTER_IN] && states[INNER_IN])
                 {
                     states[OUTER_OUT] = true;
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -360,7 +339,7 @@ void incrementTask(void *params)
                 if (states[OUTER_IN])
                 {
                     states[INNER_IN] = true;
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -374,7 +353,7 @@ void incrementTask(void *params)
                 {
                     count++;
                     ets_printf("++\n");
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -387,7 +366,7 @@ void incrementTask(void *params)
                 {
                     states[i] = false;
                 }
-                ulNotification = TASK_SLEEP;
+                ulNotification = TASK_WAIT;
                 break;
 
             default:
@@ -412,7 +391,7 @@ void decrementTask(void *params)
     while (1)
     {
         // after each step further in the state machine, back to sleep
-        if (ulNotification == TASK_SLEEP)
+        if (ulNotification == TASK_WAIT)
         {
             xTaskNotifyWait(
                 ULONG_MAX,
@@ -462,7 +441,7 @@ void decrementTask(void *params)
             // step 1: break the inner barrier
             case INNER_IN:
                 states[INNER_IN] = true;
-                ulNotification = TASK_SLEEP;
+                ulNotification = TASK_WAIT;
                 break;
 
             // step 3: release inner barrier
@@ -470,7 +449,7 @@ void decrementTask(void *params)
                 if (states[INNER_IN] && states[OUTER_IN])
                 {
                     states[INNER_OUT] = true;
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -483,7 +462,7 @@ void decrementTask(void *params)
                 if (states[INNER_IN])
                 {
                     states[OUTER_IN] = true;
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -500,7 +479,7 @@ void decrementTask(void *params)
                         count--;
                         ets_printf("--\n");
                     }
-                    ulNotification = TASK_SLEEP;
+                    ulNotification = TASK_WAIT;
                 }
                 else
                 {
@@ -513,7 +492,7 @@ void decrementTask(void *params)
                 {
                     states[i] = false;
                 }
-                ulNotification = TASK_SLEEP;
+                ulNotification = TASK_WAIT;
                 break;
 
             default:

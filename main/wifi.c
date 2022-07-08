@@ -90,9 +90,6 @@ void initWifi(void)
             .ssid = WIFI_SSID,
             .password = WIFI_PASS,
 
-            // .listen_interval = 3
-
-
             /* Setting a password implies station will connect to all security modes including WEP/WPA.
              * However these modes are deprecated and not advisable to be used. Incase your Access point
              * doesn't support WPA2, these mode can be enabled by commenting below line */
@@ -109,8 +106,6 @@ void initWifi(void)
     ESP_ERROR_CHECK(esp_wifi_start() );
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
-
-    //esp_wifi_set_ps(WIFI_PS_MAX_MODEM); //Required to specify list_interval
 
 
 
