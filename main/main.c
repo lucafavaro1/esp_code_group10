@@ -50,9 +50,7 @@
 static const char *TAG = "BLINK";
 volatile uint8_t __attribute__ ((section(".noinit"))) count;
 volatile uint8_t __attribute__ ((section(".noinit"))) firstTime;
-volatile uint8_t prediction = 0;
 volatile uint8_t predictionLr = 0;
-volatile uint8_t prediction_ts = 0;
 volatile uint64_t lastStableOuterTs = 0;
 volatile uint64_t lastStableInnerTs = 0;
 static IRAM_ATTR TaskHandle_t outerBarrierTaskHandle;
@@ -205,32 +203,6 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-void getPrediction()
-{
-    char buffer[255] = {0};
-    char *out;
-    esp_http_client_config_t config = {
-            .host = VM_HOST_URL,
-            .path = "/predict",
-            .auth_type = HTTP_AUTH_TYPE_NONE,
-            .user_data = &buffer,
-            .event_handler = _http_event_handler
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    esp_err_t err = esp_http_client_perform(client);
-
-    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200) {
-        int size = esp_http_client_get_content_length(client);
-        cJSON *root = cJSON_Parse(buffer);
-        if (root) {
-            prediction = cJSON_GetObjectItem(root, "prediction")->valueint;
-            cJSON_Delete(root);
-        }
-    } else {
-        ets_printf("HTTP GET request failed: %s", esp_err_to_name(err));
-    }
-}
-
 void getPredictionLr() 
 {
     char buffer[255] = {0};
@@ -291,15 +263,10 @@ void retrieveAndSend(void)
             if (count > 0)
                 count = 0;
 
-        getPrediction();
         getPredictionLr();
 
         // send the sensor value to the mqtt platform
         sendToMqtt(USER_NAME, SENSOR_NAME, count, DEVICEID, rawtime);
-
-        // send the prediction value to the mqtt platform
-        sendToMqtt(USER_NAME, SENSOR_PREDICTION, prediction, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
-        
         sendToMqtt(USER_NAME, SENSOR_PREDICTION_LR, predictionLr, DEVICEID, rawtime + 900); // Add 900 seconds to the ts
 
         vTaskDelay(pdMS_TO_TICKS(300 * 1000)); // wait for 5 mins = 300 sec = 300*1000 ms
