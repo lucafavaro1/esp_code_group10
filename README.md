@@ -1,5 +1,7 @@
-# Blink Example
+# Group 10 - esp code
 
-Starts a FreeRTOS task to blink an LED
+This project is composed of multiple parts:
 
-See the README.md file in the upper level 'examples' directory for more information about examples.
+- counting algorithm: state machine implementation to count the number of people entering and exiting the seminar room
+- MQTT integration to send data (count and predictions) to the platform
+- HTTP requests to retrieve predictions computed on the VM
