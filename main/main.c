@@ -27,7 +27,6 @@
 #define INNER_BARRIER_ADC ADC_CHANNEL_6
 #define INNER_BARRIER_GPIO CONFIG_LIGHT2_GPIO
 
-#define POSEDGE_THRESHOLD_RAW 0                  // Anything above 0 is a pos edge (entering movement)
 #define NEGEDGE_THRESHOLD_RAW 2270               // Anything above 2270 is a neg edge (leaving movement)
 #define DEBOUNCE_TIME_IN_MICROSECONDS 1000 * 100 // in miliseconds
 
@@ -567,7 +566,6 @@ void app_main(void)
         firstTime = 42;
     }
 
-    //configPM();
     initWifi();
     initSNTP();
     initMQTT();
@@ -614,6 +612,4 @@ void app_main(void)
     // plus one task to send data every 5 mins to MQTT
     xTaskCreate(retrieveAndSend, "Send Data Task", 4096, NULL, 3, NULL);
 
-    //testLightSleep();
-    //testDeepSleep();
 }
